@@ -1,8 +1,3 @@
-// server.cjs
-// Deblocked Chat V3 — CommonJS + SQLite persistence (Railway + Netlify ready)
-//
-// deps: express, socket.io, multer, uuid, cors, sqlite3, helmet
-
 const path = require("path");
 const fs = require("fs");
 const express = require("express");
@@ -14,28 +9,18 @@ const cors = require("cors");
 const sqlite3 = require("sqlite3").verbose();
 const helmet = require("helmet");
 
-// -------------------------
-// Config
-// -------------------------
 const PORT = process.env.PORT || 8080;
-
-// Where to store *mutable* data (DB + uploaded avatars)
 const DATA_DIR = process.env.DATA_DIR || "/data";
 const PUBLIC_DIR = path.join(__dirname, "public");
-
-// Ensure data dirs exist
-fs.mkdirSync(DATA_DIR, { recursive: true });
 const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
-fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-
-// Upload constraints
+const DB_FILE = path.join(DATA_DIR, "messages.db");
 const MAX_UPLOAD_MB = 10;
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+const VORTEX_BASE = process.env.VORTEX_API_BASE || "https://waveunblockedddd.github.io";
 
-// -------------------------
-// SQLite setup
-// -------------------------
-const DB_FILE = path.join(DATA_DIR, "messages.db");
+fs.mkdirSync(DATA_DIR, { recursive: true });
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
 const db = new sqlite3.Database(DB_FILE);
 
 db.serialize(() => {
@@ -43,38 +28,62 @@ db.serialize(() => {
   db.run(`PRAGMA synchronous = NORMAL;`);
   db.run(`PRAGMA foreign_keys = ON;`);
   db.run(`PRAGMA busy_timeout = 3000;`);
-
   db.run(`
     CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
+      server TEXT DEFAULT 'deblocked',
+      source TEXT DEFAULT 'deblocked',
       userId TEXT,
       name TEXT,
       color TEXT,
       avatar TEXT,
       text TEXT,
       attachment TEXT,
+      replyTo TEXT,
+      synced INTEGER DEFAULT 1,
       createdAt INTEGER
     );
   `);
-
   db.run(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
+      server TEXT DEFAULT 'deblocked',
       name TEXT,
       color TEXT,
       avatar TEXT,
       lastSeen INTEGER
     );
   `);
-
-  db.run(`CREATE INDEX IF NOT EXISTS idx_messages_createdAt ON messages(createdAt);`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_messages_userId ON messages(userId);`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_users_lastSeen ON users(lastSeen);`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS reactions (
+      id TEXT PRIMARY KEY,
+      messageId TEXT,
+      userId TEXT,
+      server TEXT,
+      emoji TEXT,
+      createdAt INTEGER,
+      UNIQUE(messageId, userId, emoji)
+    );
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_messages_server ON messages(server, createdAt);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_users_server ON users(server);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_reactions_msg ON reactions(messageId);`);
 });
 
-// -------------------------
-// Multer (file uploads -> /data/uploads)
-// -------------------------
+const ensureColumn = (table, column, type) => {
+  db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${type};`, (err) => {
+    if (err && !/duplicate column/.test(String(err.message))) {
+      console.warn(`Column ensure failed for ${table}.${column}:`, err.message);
+    }
+  });
+};
+
+ensureColumn("messages", "server", "TEXT DEFAULT 'deblocked'");
+ensureColumn("messages", "source", "TEXT DEFAULT 'deblocked'");
+ensureColumn("messages", "replyTo", "TEXT");
+ensureColumn("messages", "synced", "INTEGER DEFAULT 1");
+ensureColumn("users", "server", "TEXT DEFAULT 'deblocked'");
+
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, UPLOAD_DIR),
   filename: (_, file, cb) => {
@@ -83,6 +92,7 @@ const storage = multer.diskStorage({
     cb(null, `${id}${ext}`);
   },
 });
+
 const upload = multer({
   storage,
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
@@ -92,23 +102,16 @@ const upload = multer({
   },
 });
 
-// -------------------------
-// Express app
-// -------------------------
 const app = express();
 
-// -------------------------
-// SECURITY FIX FOR IFRAMES (NETLIFY EMBED)
-// -------------------------
 app.use(
   helmet({
-    frameguard: false, // removes X-Frame-Options
+    frameguard: false,
     crossOriginEmbedderPolicy: false,
-    contentSecurityPolicy: false, // disable default strict CSP
+    contentSecurityPolicy: false,
   })
 );
 
-// Override headers to allow full embedding
 app.use((req, res, next) => {
   res.removeHeader("X-Frame-Options");
   res.setHeader(
@@ -118,14 +121,9 @@ app.use((req, res, next) => {
   next();
 });
 
-// -------------------------
-// Basics
-// -------------------------
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
-
-// Static assets (read-only app bundle)
 app.use(
   express.static(PUBLIC_DIR, {
     setHeaders: (res) => {
@@ -133,26 +131,16 @@ app.use(
     },
   })
 );
-
-// Serve uploaded avatars/images from writable volume
 app.use(
   "/uploads",
   express.static(UPLOAD_DIR, {
-    setHeaders: (res) => {
-      res.setHeader("Cache-Control", "no-store");
-    },
+    setHeaders: (res) => res.setHeader("Cache-Control", "no-store"),
   })
 );
 
-// -------------------------
-// Endpoints
-// -------------------------
 app.get("/health", (_, res) => res.json({ ok: true }));
-app.get("/version", (_, res) =>
-  res.json({ name: "Deblocked Chat V3", version: "1.0.0" })
-);
+app.get("/version", (_, res) => res.json({ name: "Deblocked Chat V3 Ultra", version: "3.0.0" }));
 
-// Upload endpoint
 app.post("/upload", (req, res, next) => {
   upload.single("file")(req, res, (err) => {
     if (err) {
@@ -166,190 +154,509 @@ app.post("/upload", (req, res, next) => {
   });
 });
 
-// Message history
 app.get("/history", (req, res) => {
   const limit = Math.min(500, parseInt(req.query.limit, 10) || 200);
+  const server = req.query.server === "vortex" ? "vortex" : "deblocked";
   const since = parseInt(req.query.since, 10) || 0;
-
-  const sql =
-    since > 0
-      ? `SELECT * FROM messages WHERE createdAt > ? ORDER BY createdAt ASC LIMIT ?`
-      : `SELECT * FROM messages ORDER BY createdAt ASC LIMIT ?`;
-
-  const params = since > 0 ? [since, limit] : [limit];
-
-  db.all(sql, params, (err, rows) => {
+  const sql = `SELECT * FROM messages WHERE server = ? AND createdAt > ? ORDER BY createdAt ASC LIMIT ?`;
+  db.all(sql, [server, since, limit], (err, rows) => {
     if (err) return res.status(500).json({ error: "db error" });
     res.json({ messages: rows || [] });
   });
 });
 
-// Online users snapshot
-app.get("/online", (_, res) => {
-  res.json({ online: Array.from(onlineUsers.values()) });
+app.get("/online", (req, res) => {
+  const server = req.query.server === "vortex" ? "vortex" : "deblocked";
+  res.json({ online: Array.from(presence[server].values()) });
 });
 
-// -------------------------
-// HTTP + Socket.IO
-// -------------------------
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: true, credentials: true },
   transports: ["websocket", "polling"],
 });
 
-// In-memory presence
-const socketsToUser = new Map();
-const onlineUsers = new Map();
+const socketsMeta = new Map();
+const presence = {
+  deblocked: new Map(),
+  vortex: new Map(),
+};
+
+const vortexCache = {
+  users: [],
+  messages: [],
+  fetchedUsersAt: 0,
+  fetchedMessagesAt: 0,
+};
 
 function now() {
   return Date.now();
 }
-function makeSystem(text) {
-  return { id: uuidv4(), system: true, text, createdAt: now() };
+
+function makeSystem(text, serverKey) {
+  return {
+    id: uuidv4(),
+    system: true,
+    text,
+    server: serverKey,
+    createdAt: now(),
+  };
 }
 
-// Save message
-function saveMessage(msg, cb) {
-  const stmt = db.prepare(`
-    INSERT INTO messages (id,userId,name,color,avatar,text,attachment,createdAt)
-    VALUES (?,?,?,?,?,?,?,?)
-  `);
-  stmt.run(
+function runAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) return reject(err);
+      resolve(this);
+    });
+  });
+}
+
+function allAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => {
+      if (err) return reject(err);
+      resolve(rows);
+    });
+  });
+}
+
+async function fetchJson(url) {
+  try {
+    const res = await fetch(url, { headers: { "User-Agent": "Deblocked-Chat-V3" } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err) {
+    console.warn("Fetch error", url, err.message);
+    return null;
+  }
+}
+
+async function loadVortexUsers(force = false) {
+  if (!force && now() - vortexCache.fetchedUsersAt < 60_000 && vortexCache.users.length) {
+    return vortexCache.users;
+  }
+  const data =
+    (await fetchJson(`${VORTEX_BASE}/api/vortex/users.json`)) ||
+    (await fetchJson(`${VORTEX_BASE}/users.json`));
+  if (Array.isArray(data)) {
+    vortexCache.users = data.slice(0, 200).map((u) => ({
+      id: u.id || u.userId || uuidv4(),
+      name: u.name || u.username || "Vortex User",
+      avatar: u.avatar || u.photo || "",
+      color: u.color || "#60a5fa",
+    }));
+    vortexCache.fetchedUsersAt = now();
+  }
+  return vortexCache.users;
+}
+
+async function loadVortexMessages(force = false) {
+  if (!force && now() - vortexCache.fetchedMessagesAt < 25_000 && vortexCache.messages.length) {
+    return vortexCache.messages;
+  }
+  const data =
+    (await fetchJson(`${VORTEX_BASE}/api/vortex/messages.json`)) ||
+    (await fetchJson(`${VORTEX_BASE}/messages.json`));
+  if (Array.isArray(data)) {
+    vortexCache.messages = data
+      .slice(-200)
+      .map((m) => ({
+        id: m.id || uuidv4(),
+        server: "vortex",
+        source: "vortex:remote",
+        user: {
+          id: m.userId || m.authorId || uuidv4(),
+          name: m.name || m.author || "Vortex User",
+          color: m.color || "#3ac8ff",
+          avatar: m.avatar || m.photo || "",
+        },
+        text: m.text || m.message || "",
+        attachment: m.attachment ? { url: m.attachment } : null,
+        createdAt: m.createdAt || now(),
+        replyTo: m.replyTo || null,
+      }));
+    vortexCache.fetchedMessagesAt = now();
+  }
+  return vortexCache.messages;
+}
+
+async function pushVortexMessage(msg) {
+  try {
+    const endpoint = `${VORTEX_BASE}/api/vortex/ingest`;
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(msg),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return true;
+  } catch (err) {
+    console.warn("Vortex send failed", err.message);
+    return false;
+  }
+}
+
+async function upsertUser(user, serverKey) {
+  const stmt = `
+    INSERT INTO users (id, server, name, color, avatar, lastSeen)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      server = excluded.server,
+      name = excluded.name,
+      color = excluded.color,
+      avatar = excluded.avatar,
+      lastSeen = excluded.lastSeen
+  `;
+  await runAsync(stmt, [user.id, serverKey, user.name, user.color || "#7b61ff", user.avatar || "", now()]);
+}
+
+async function persistMessage(msg) {
+  const sql = `
+    INSERT INTO messages (id, server, source, userId, name, color, avatar, text, attachment, replyTo, synced, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+  await runAsync(sql, [
     msg.id,
+    msg.server,
+    msg.source,
     msg.user.id,
     msg.user.name,
     msg.user.color,
     msg.user.avatar || "",
     msg.text || "",
     msg.attachment?.url || null,
+    msg.replyTo || null,
+    msg.synced ? 1 : 0,
     msg.createdAt,
-    function (err) {
-      stmt.finalize();
-      cb && cb(err);
+  ]);
+}
+
+async function saveReaction({ id, messageId, userId, server, emoji }) {
+  const sql = `
+    INSERT INTO reactions (id, messageId, userId, server, emoji, createdAt)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(messageId, userId, emoji) DO UPDATE SET createdAt = excluded.createdAt
+  `;
+  await runAsync(sql, [id, messageId, userId, server, emoji, now()]);
+}
+
+async function removeReaction({ messageId, userId, emoji }) {
+  await runAsync(`DELETE FROM reactions WHERE messageId = ? AND userId = ? AND emoji = ?`, [
+    messageId,
+    userId,
+    emoji,
+  ]);
+}
+
+async function enrichMessage(row) {
+  const reactionMap = await buildReactionMap(row.id, row.server);
+  let replySnapshot = null;
+  if (row.replyTo) {
+    const parent = await allAsync(`SELECT * FROM messages WHERE id = ? LIMIT 1`, [row.replyTo]);
+    if (parent?.[0]) {
+      replySnapshot = rowToMessage(parent[0]);
     }
-  );
+  }
+  return Object.assign(rowToMessage(row), { reactions: reactionMap, replySnapshot });
 }
 
-// Upsert user
-function upsertUser(u) {
-  const stmt = db.prepare(`
-    INSERT INTO users (id,name,color,avatar,lastSeen)
-    VALUES (?,?,?,?,?)
-    ON CONFLICT(id) DO UPDATE SET
-      name=excluded.name,
-      color=excluded.color,
-      avatar=excluded.avatar,
-      lastSeen=excluded.lastSeen
-  `);
-  stmt.run(u.id, u.name, u.color || "#7b61ff", u.avatar || "", now(), () =>
-    stmt.finalize()
-  );
+function rowToMessage(row) {
+  return {
+    id: row.id,
+    server: row.server,
+    source: row.source,
+    user: {
+      id: row.userId,
+      name: row.name,
+      color: row.color,
+      avatar: row.avatar,
+    },
+    text: row.text,
+    attachment: row.attachment ? { url: row.attachment } : null,
+    replyTo: row.replyTo || null,
+    createdAt: row.createdAt,
+  };
 }
 
-// -------------------------
-// Socket events
-// -------------------------
+async function buildReactionMap(messageId, serverKey) {
+  const rows = await allAsync(`SELECT emoji, userId FROM reactions WHERE messageId = ?`, [messageId]);
+  const map = {};
+  const ids = new Set();
+  rows.forEach((row) => {
+    if (!map[row.emoji]) map[row.emoji] = { count: 0, users: [] };
+    map[row.emoji].count += 1;
+    map[row.emoji].users.push({ id: row.userId });
+    ids.add(row.userId);
+  });
+  if (!ids.size) return map;
+  const placeholders = Array.from(ids)
+    .map(() => "?")
+    .join(",");
+  const users = await allAsync(
+    `SELECT id, name, avatar, color FROM users WHERE id IN (${placeholders})`,
+    Array.from(ids)
+  ).catch(() => []);
+  const userMap = {};
+  users.forEach((u) => {
+    userMap[u.id] = { id: u.id, name: u.name, avatar: u.avatar, color: u.color };
+  });
+  Object.values(map).forEach((entry) => {
+    entry.users = entry.users.map((u) => userMap[u.id] || { id: u.id, name: "User" });
+  });
+  return map;
+}
+
+async function listHistory(serverKey, limit = 200) {
+  const rows = await allAsync(
+    `SELECT * FROM messages WHERE server = ? ORDER BY createdAt ASC LIMIT ?`,
+    [serverKey, limit]
+  );
+  const enriched = [];
+  for (const row of rows) {
+    enriched.push(await enrichMessage(row));
+  }
+  return enriched;
+}
+
+async function broadcastHistory(socket, serverKey) {
+  const history = await listHistory(serverKey, 250);
+  socket.emit("history", history);
+}
+
+function presenceLabel(serverKey) {
+  return serverKey === "vortex" ? "Vortex Realm" : "Deblocked Realm";
+}
+
 io.on("connection", (socket) => {
-  socket.on("join", (payload, ack) => {
+  socket.on("join", async (payload, ack) => {
     try {
-      const userId = payload?.id || uuidv4();
-      const name = String(payload?.name || "Guest").slice(0, 64);
-      const color = String(payload?.color || "#7b61ff").slice(0, 32);
-      const avatar = String(payload?.avatar || "").slice(0, 512);
-      const user = { id: userId, name, color, avatar };
+      const serverKey = payload?.server === "vortex" ? "vortex" : "deblocked";
+      const user = {
+        id: payload?.id || uuidv4(),
+        name: String(payload?.name || "Guest").slice(0, 64),
+        color: String(payload?.color || "#7b61ff").slice(0, 32),
+        avatar: String(payload?.avatar || "").slice(0, 512),
+      };
 
-      socketsToUser.set(socket.id, user);
-      onlineUsers.set(user.id, user);
-      upsertUser(user);
+      const existing = socketsMeta.get(socket.id);
+      if (existing && existing.server !== serverKey) {
+        socket.leave(existing.server);
+        presence[existing.server].delete(existing.user.id);
+        io.to(existing.server).emit("presence:user-left", {
+          userId: existing.user.id,
+          name: existing.user.name,
+        });
+        io.to(existing.server).emit(
+          "message:new",
+          makeSystem(`${existing.user.name} switched realms`, existing.server)
+        );
+        io.to(existing.server).emit("presence:list", Array.from(presence[existing.server].values()));
+      }
 
-      db.all("SELECT * FROM messages ORDER BY createdAt ASC LIMIT 200", [], (err, rows) => {
-        const history = err ? [] : rows;
-        socket.emit("history", history);
-        socket.broadcast.emit("presence:user-joined", { user });
-        io.emit("message:new", makeSystem(`${user.name} joined`));
-        io.emit("presence:list", Array.from(onlineUsers.values()));
-        ack && ack({ ok: true, user, online: Array.from(onlineUsers.values()) });
-      });
-    } catch (e) {
-      ack && ack({ ok: false, error: e.message });
+      socketsMeta.set(socket.id, { user, server: serverKey });
+      socket.join(serverKey);
+      presence[serverKey].set(user.id, user);
+      await upsertUser(user, serverKey);
+
+      if (serverKey === "vortex") {
+        loadVortexUsers().then((users) => {
+          users.forEach((remote) => {
+            presence.vortex.set(remote.id, Object.assign({ color: "#3ac8ff" }, remote));
+          });
+          io.to("vortex").emit("presence:list", Array.from(presence.vortex.values()));
+        });
+        loadVortexMessages().then(async (messages) => {
+          for (const msg of messages) {
+            try {
+              await upsertUser(msg.user, "vortex");
+              await persistMessage({
+                ...msg,
+                source: msg.source || "vortex:remote",
+                server: "vortex",
+                user: msg.user,
+                createdAt: msg.createdAt || now(),
+                synced: 1,
+              });
+            } catch (err) {
+              if (!/UNIQUE constraint failed/.test(String(err.message))) {
+                console.warn("Persist remote vortex message failed", err.message);
+              }
+            }
+          }
+        });
+      }
+
+      await broadcastHistory(socket, serverKey);
+      io.to(serverKey).emit("presence:list", Array.from(presence[serverKey].values()));
+      socket.to(serverKey).emit("presence:user-joined", { user });
+      io.to(serverKey).emit("message:new", makeSystem(`${user.name} joined`, serverKey));
+
+      ack &&
+        ack({
+          ok: true,
+          user,
+          server: serverKey,
+          serverLabel: presenceLabel(serverKey),
+          online: Array.from(presence[serverKey].values()),
+        });
+    } catch (err) {
+      ack && ack({ ok: false, error: err.message });
     }
   });
 
-  socket.on("message:send", (payload, ack) => {
-    const u = socketsToUser.get(socket.id);
-    if (!u) return ack && ack({ ok: false, error: "not joined" });
-
+  socket.on("message:send", async (payload, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
     const last = socket._lastMsgAt || 0;
-    const nowTs = Date.now();
-    if (nowTs - last < 300) return ack && ack({ ok: false, error: "slow down" });
-    socket._lastMsgAt = nowTs;
+    const ts = now();
+    if (ts - last < 250) return ack && ack({ ok: false, error: "Slow down" });
+    socket._lastMsgAt = ts;
 
-    const text = payload?.text ? String(payload.text).slice(0, 2000) : "";
+    const text = payload?.text ? String(payload.text).slice(0, 4000) : "";
     const attachment = payload?.attachment?.url
-      ? { url: String(payload.attachment.url).slice(0, 1024) }
+      ? { url: String(payload.attachment.url).slice(0, 2048) }
       : null;
-    if (!text && !attachment)
-      return ack && ack({ ok: false, error: "empty" });
+    if (!text && !attachment) return ack && ack({ ok: false, error: "Empty message" });
 
     const msg = {
       id: uuidv4(),
-      user: { id: u.id, name: u.name, color: u.color, avatar: u.avatar },
+      server: meta.server,
+      source: meta.server === "vortex" ? "vortex:local" : "deblocked",
+      user: meta.user,
       text,
       attachment,
-      createdAt: nowTs,
+      replyTo: payload?.replyTo || null,
+      createdAt: ts,
+      synced: 1,
     };
 
-    saveMessage(msg, () => {
-      io.emit("message:new", msg);
+    try {
+      await persistMessage(msg);
+      const enriched = await enrichMessage({
+        ...msg,
+        name: msg.user.name,
+        color: msg.user.color,
+        avatar: msg.user.avatar,
+        userId: msg.user.id,
+        attachment: msg.attachment?.url || null,
+      });
+      io.to(meta.server).emit("message:new", enriched);
       ack && ack({ ok: true, id: msg.id });
-    });
+      if (meta.server === "vortex") {
+        const ok = await pushVortexMessage({
+          id: msg.id,
+          userId: msg.user.id,
+          name: msg.user.name,
+          avatar: msg.user.avatar,
+          text: msg.text,
+          attachment: msg.attachment?.url || null,
+          replyTo: msg.replyTo,
+          createdAt: msg.createdAt,
+        });
+        if (!ok) {
+          await runAsync(`UPDATE messages SET synced = 0 WHERE id = ?`, [msg.id]);
+        }
+      }
+    } catch (err) {
+      console.error("message:send error", err.message);
+      ack && ack({ ok: false, error: "Failed to save" });
+    }
   });
 
-  socket.on("settings:update", (partial, ack) => {
-    const u = socketsToUser.get(socket.id);
-    if (!u) return ack && ack({ ok: false });
+  socket.on("message:react", async (payload, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    const messageId = payload?.messageId;
+    const emoji = payload?.emoji;
+    if (!messageId || !emoji) return ack && ack({ ok: false, error: "invalid" });
+    try {
+      const existing = await allAsync(`SELECT * FROM reactions WHERE messageId = ? AND userId = ? AND emoji = ?`, [
+        messageId,
+        meta.user.id,
+        emoji,
+      ]);
+      if (existing.length) {
+        await removeReaction({ messageId, userId: meta.user.id, emoji });
+      } else {
+        await saveReaction({
+          id: uuidv4(),
+          messageId,
+          userId: meta.user.id,
+          server: meta.server,
+          emoji,
+        });
+      }
+      const reactions = await buildReactionMap(messageId, meta.server);
+      io.to(meta.server).emit("message:reactions", { messageId, reactions });
+      ack && ack({ ok: true });
+    } catch (err) {
+      console.error("reaction error", err.message);
+      ack && ack({ ok: false, error: "reaction failed" });
+    }
+  });
 
-    if (typeof partial?.name === "string")
-      u.name = partial.name.slice(0, 64) || u.name;
-    if (typeof partial?.color === "string") u.color = partial.color.slice(0, 32);
-    if (typeof partial?.avatar === "string")
-      u.avatar = partial.avatar.slice(0, 512);
+  socket.on("history:request", async (payload, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    try {
+      const history = await listHistory(meta.server, Math.min(500, payload?.limit || 250));
+      socket.emit("history", history);
+      ack && ack({ ok: true, count: history.length });
+    } catch (err) {
+      ack && ack({ ok: false, error: err.message });
+    }
+  });
 
-    socketsToUser.set(socket.id, u);
-    onlineUsers.set(u.id, u);
-    upsertUser(u);
+  socket.on("message:pull", async ({ id }, ack) => {
+    if (!id) return ack && ack({ ok: false });
+    try {
+      const rows = await allAsync(`SELECT * FROM messages WHERE id = ? LIMIT 1`, [id]);
+      if (!rows[0]) return ack && ack({ ok: false, error: "missing" });
+      const msg = await enrichMessage(rows[0]);
+      socket.emit("message:update", msg);
+      ack && ack({ ok: true });
+    } catch (err) {
+      ack && ack({ ok: false, error: err.message });
+    }
+  });
 
-    io.emit("presence:user-updated", { user: u });
-    io.emit("presence:list", Array.from(onlineUsers.values()));
-    ack && ack({ ok: true, user: u });
+  socket.on("settings:update", async (partial, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    if (typeof partial?.name === "string" && partial.name.trim()) {
+      meta.user.name = partial.name.slice(0, 64);
+    }
+    if (typeof partial?.color === "string") meta.user.color = partial.color.slice(0, 32);
+    if (typeof partial?.avatar === "string") meta.user.avatar = partial.avatar.slice(0, 512);
+    socketsMeta.set(socket.id, meta);
+    presence[meta.server].set(meta.user.id, meta.user);
+    await upsertUser(meta.user, meta.server);
+    io.to(meta.server).emit("presence:user-updated", { user: meta.user });
+    ack && ack({ ok: true, user: meta.user });
   });
 
   socket.on("presence:typing", (isTyping) => {
-    const u = socketsToUser.get(socket.id);
-    if (!u) return;
-    socket.broadcast.emit("presence:typing", {
-      userId: u.id,
-      name: u.name,
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return;
+    socket.to(meta.server).emit("presence:typing", {
+      userId: meta.user.id,
+      name: meta.user.name,
       isTyping: !!isTyping,
     });
   });
 
   socket.on("disconnect", () => {
-    const u = socketsToUser.get(socket.id);
-    if (u) {
-      socketsToUser.delete(socket.id);
-      onlineUsers.delete(u.id);
-      socket.broadcast.emit("presence:user-left", { userId: u.id, name: u.name });
-      io.emit("message:new", makeSystem(`${u.name} left`));
-      io.emit("presence:list", Array.from(onlineUsers.values()));
-    }
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return;
+    socketsMeta.delete(socket.id);
+    presence[meta.server].delete(meta.user.id);
+    socket.to(meta.server).emit("presence:user-left", { userId: meta.user.id, name: meta.user.name });
+    io.to(meta.server).emit("message:new", makeSystem(`${meta.user.name} left`, meta.server));
+    io.to(meta.server).emit("presence:list", Array.from(presence[meta.server].values()));
   });
 });
 
-// -------------------------
-// Start
-// -------------------------
 server.listen(PORT, () => {
   console.log(`✅ Chat server running on port ${PORT}`);
   console.log(`📀 SQLite DB: ${DB_FILE}`);
