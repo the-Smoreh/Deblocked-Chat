@@ -1,95 +1,133 @@
 const socket = io({ transports: ["websocket", "polling"], autoConnect: false });
 
 const qs = (sel) => document.querySelector(sel);
-const qsa = (sel) => Array.from(document.querySelectorAll(sel));
-
-const feed = qs("#feed");
-const typingEl = qs("#typing");
-const onlineEl = qs("#onlineCount");
-const onlineListEl = qs("#onlineList");
-const bannerEl = qs("#banner");
-const activeServerEl = qs("#activeServer");
-const profileNameEl = qs("#profileName");
-const accentPreviewEl = qs("#accentPreview");
-const reactionPalette = qs("#reactionPalette");
-
-const messageInput = qs("#messageInput");
-const sendBtn = qs("#sendBtn");
-const attachBtn = qs("#attachBtn");
-const fileInput = qs("#fileInput");
-const avatarInput = qs("#avatarInput");
-const avatarPreview = qs("#avatarPreview");
-const bannerTheme = qs("#bannerTheme");
-const historyRefresh = qs("#historyRefresh");
-const clearChatBtn = qs("#clearChat");
-const cancelReplyBtn = qs("#cancelReply");
-const replyPreview = qs("#replyPreview");
-const replyUserEl = qs("#replyUser");
-const replyTextEl = qs("#replyText");
-const toggleStarsBtn = qs("#toggleStarsBtn");
-
-const settingsBtn = qs("#settingsBtn");
-const settingsDlg = qs("#settings");
-const closeSettings = qs("#closeSettings");
-const saveSettings = qs("#saveSettings");
-const nameField = qs("#nameField");
-const colorAField = qs("#colorA");
-const colorBField = qs("#colorB");
-const bannerColorField = qs("#bannerColor");
-const toggleTimestamps = qs("#toggleTimestamps");
-const toggleAutoScroll = qs("#toggleAutoScroll");
-
-const connectivityBtn = qs("#connectivityBtn");
-const connectivityDlg = qs("#connectivity");
-const closeConnectivity = qs("#closeConnectivity");
-const connectivityServer = qs("#connectivityServer");
-const toggleStars = qs("#toggleStars");
-const applyConnectivity = qs("#applyConnectivity");
-
-const intro = qs("#intro");
-const introName = qs("#introName");
-const introAvatar = qs("#introAvatar");
-const introStart = qs("#introStart");
-const serverModeSelect = qs("#serverMode");
-
-const starsCanvas = qs("#stars");
-
-let me = {
-  id: localStorage.getItem("userId") || null,
-  name: localStorage.getItem("name") || "",
-  colorA: localStorage.getItem("colorA") || "#7b61ff",
-  colorB: localStorage.getItem("colorB") || "#ad83ff",
-  banner: localStorage.getItem("banner") || "#1d1b22",
-  avatar: localStorage.getItem("avatar") || "",
+const create = (tag, cls) => {
+  const el = document.createElement(tag);
+  if (cls) el.className = cls;
+  return el;
 };
-let serverMode = localStorage.getItem("serverMode") || "deblocked";
-let autoScroll = localStorage.getItem("autoScroll") !== "false";
-let showTimestamps = localStorage.getItem("showTimestamps") === "true";
-let starsEnabled = localStorage.getItem("starsEnabled") !== "false";
 
-let onlineUsers = new Map();
-let whoTyping = new Map();
-let chatMessages = new Map();
-let pendingReply = null;
-let quickReactTarget = null;
-let isConnecting = false;
+const state = {
+  user: null,
+  accentStart: localStorage.getItem("accentStart") || "#7b61ff",
+  accentEnd: localStorage.getItem("accentEnd") || "#ad83ff",
+  banner: localStorage.getItem("bannerColor") || "#1d1b22",
+  autoScroll: localStorage.getItem("autoScroll") !== "false",
+  showTimestamps: localStorage.getItem("showTimestamps") === "true",
+  conversations: new Map(),
+  messages: new Map(),
+  presence: new Map(),
+  typing: new Map(),
+  friends: { accepted: [], outgoing: [], incoming: [] },
+  users: new Map(),
+  activeConversation: null,
+  pendingAttachment: null,
+  pendingAttachmentName: null,
+  pendingReply: null,
+  typingTimer: null,
+};
 
-function setVar(name, val) {
-  document.documentElement.style.setProperty(name, val);
+const els = {
+  intro: qs("#intro"),
+  introName: qs("#introName"),
+  introAvatar: qs("#introAvatar"),
+  introBanner: qs("#introBanner"),
+  accentStart: qs("#accentStart"),
+  accentEnd: qs("#accentEnd"),
+  introStart: qs("#introStart"),
+  app: qs("#app"),
+  navStatus: qs("#navStatus"),
+  dmList: qs("#dmList"),
+  realmList: qs("#realmList"),
+  groupList: qs("#groupList"),
+  realmGuilds: qs("#realmGuilds"),
+  feed: qs("#feed"),
+  typing: qs("#typing"),
+  messageInput: qs("#messageInput"),
+  sendBtn: qs("#sendBtn"),
+  attachBtn: qs("#attachBtn"),
+  fileInput: qs("#fileInput"),
+  toggleAutoScroll: qs("#toggleAutoScroll"),
+  toggleTimestamps: qs("#toggleTimestamps"),
+  conversationTitle: qs("#conversationTitle"),
+  conversationSubtitle: qs("#conversationSubtitle"),
+  inviteBtn: qs("#inviteBtn"),
+  addFriendBtn: qs("#addFriendBtn"),
+  profileBtn: qs("#profileBtn"),
+  avatarPreview: qs("#avatarPreview"),
+  profileName: qs("#profileName"),
+  composerHint: qs("#composerHint"),
+  banner: qs("#banner"),
+  sidebarAvatar: qs("#sidebarAvatar"),
+  sidebarName: qs("#sidebarName"),
+  presenceList: qs("#presenceList"),
+  friendsList: qs("#friendsList"),
+  pendingList: qs("#pendingList"),
+  startDmBtn: qs("#startDmBtn"),
+  createGroupBtn: qs("#createGroupBtn"),
+  friendSheet: qs("#friendSheet"),
+  friendForm: qs("#friendForm"),
+  friendId: qs("#friendId"),
+  closeFriend: qs("#closeFriend"),
+  profileSheet: qs("#profileSheet"),
+  closeProfile: qs("#closeProfile"),
+  sheetBanner: qs("#sheetBanner"),
+  sheetAvatar: qs("#sheetAvatar"),
+  sheetName: qs("#sheetName"),
+  sheetTag: qs("#sheetTag"),
+  sheetFriendBtn: qs("#sheetFriendBtn"),
+  sheetMessageBtn: qs("#sheetMessageBtn"),
+  groupSheet: qs("#groupSheet"),
+  groupForm: qs("#groupForm"),
+  groupName: qs("#groupName"),
+  groupBanner: qs("#groupBanner"),
+  groupFriends: qs("#groupFriends"),
+  closeGroup: qs("#closeGroup"),
+  inviteSheet: qs("#inviteSheet"),
+  inviteFriends: qs("#inviteFriends"),
+  closeInvite: qs("#closeInvite"),
+  replyPreview: qs("#replyPreview"),
+  replyUser: qs("#replyUser"),
+  replyText: qs("#replyText"),
+  cancelReply: qs("#cancelReply"),
+  homeButton: qs("#homeButton"),
+};
+
+function setAccent(start, end) {
+  document.documentElement.style.setProperty("--accent-start", start);
+  document.documentElement.style.setProperty("--accent-end", end);
+  state.accentStart = start;
+  state.accentEnd = end;
+  if (state.user) state.user.color = start;
+  localStorage.setItem("accentStart", start);
+  localStorage.setItem("accentEnd", end);
 }
 
-function applyNameGradient(a, b) {
-  setVar("--name-a", a);
-  setVar("--name-b", b);
-  accentPreviewEl.style.background = `linear-gradient(135deg, ${a}, ${b})`;
+function setBanner(color) {
+  state.banner = color;
+  if (state.user) state.user.banner = color;
+  localStorage.setItem("bannerColor", color);
+  els.banner.style.background = color.startsWith("#")
+    ? color
+    : `linear-gradient(135deg, ${state.accentStart}, ${state.accentEnd})`;
 }
 
-function applyBanner(hex) {
-  setVar("--banner", hex);
-  bannerEl.style.setProperty("background", `linear-gradient(120deg, ${hex}, rgba(18,16,32,0.92))`);
+function avatarFallback(name, size = 64, color = state.accentStart, end = state.accentEnd) {
+  const initials = (name || "U")
+    .split(" ")
+    .map((part) => part[0] || "")
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}'>
+    <defs><linearGradient id='g' x1='0' x2='1'><stop offset='0' stop-color='${color}'/><stop offset='1' stop-color='${end}'/></linearGradient></defs>
+    <rect width='100%' height='100%' rx='${Math.floor(size / 5)}' fill='url(#g)'/>
+    <text x='50%' y='55%' font-family='Inter, system-ui' font-size='${Math.floor(size / 2)}' fill='#fff' text-anchor='middle'>${initials}</text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function timeShort(ts) {
+function formatTime(ts) {
   try {
     return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   } catch {
@@ -97,807 +135,845 @@ function timeShort(ts) {
   }
 }
 
-function makeAbsolute(url) {
-  if (!url) return url;
-  if (url.startsWith("http")) return url;
-  if (url.startsWith("//")) return `${location.protocol}${url}`;
-  if (url.startsWith("/")) return `${location.origin}${url}`;
-  return `${location.origin}/${url}`;
-}
-
-function avatarFallback(name, size = 72) {
-  const initials = (name || "U")
-    .split(" ")
-    .map((s) => s[0] || "")
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}'>
-    <defs><linearGradient id='g' x1='0' x2='1'>
-      <stop offset='0' stop-color='${me.colorA}'/><stop offset='1' stop-color='${me.colorB}'/></linearGradient></defs>
-    <rect width='100%' height='100%' rx='18' fill='url(#g)'/>
-    <text x='50%' y='55%' font-family='Inter, system-ui' font-size='${Math.floor(size / 2)}' fill='#fff' text-anchor='middle' dominant-baseline='middle'>${initials}</text>
-  </svg>`;
-  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-
-function nearBottom() {
-  return feed.scrollTop + feed.clientHeight >= feed.scrollHeight - 180;
+function setSendAvailability() {
+  const hasText = els.messageInput.value.trim().length > 0;
+  const hasAttachment = !!state.pendingAttachment;
+  const enabled = state.activeConversation && (hasText || hasAttachment);
+  els.sendBtn.disabled = !enabled;
 }
 
 function scrollToBottom(force = false) {
-  if (force || autoScroll || nearBottom()) {
-    feed.scrollTo({ top: feed.scrollHeight, behavior: force ? "auto" : "smooth" });
-  }
+  if (!state.autoScroll && !force) return;
+  requestAnimationFrame(() => {
+    els.feed.scrollTo({ top: els.feed.scrollHeight, behavior: force ? "auto" : "smooth" });
+  });
 }
 
-function wrapMentions(text, message) {
-  if (!text) return text;
-  const meRegex = new RegExp(`@${me.name.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}`, "gi");
+function updateComposerProfile() {
+  if (!state.user) return;
+  els.profileName.textContent = state.user.name;
+  els.sidebarName.textContent = state.user.name;
+  els.sheetName.textContent = state.user.name;
+  const avatar = state.user.avatar || avatarFallback(state.user.name, 72);
+  els.avatarPreview.src = avatar;
+  els.sidebarAvatar.src = avatar;
+  els.sheetAvatar.src = avatar;
+  setBanner(state.user.banner || state.banner);
+  els.sheetBanner.style.background = state.user.banner || `linear-gradient(135deg, ${state.accentStart}, ${state.accentEnd})`;
+}
+
+function presenceFor(conversationId) {
+  return state.presence.get(conversationId) || [];
+}
+
+function renderPresence(conversationId) {
+  const list = presenceFor(conversationId);
+  els.presenceList.innerHTML = "";
+  if (!list.length) {
+    els.presenceList.classList.add("empty-state");
+    els.presenceList.textContent = "No one connected";
+    return;
+  }
+  els.presenceList.classList.remove("empty-state");
+  list.forEach((user) => {
+    state.users.set(user.id, user);
+    const entry = create("div", "presence-entry");
+    const img = create("img");
+    img.src = user.avatar || avatarFallback(user.name, 40, user.color || state.accentStart);
+    img.alt = user.name;
+    img.dataset.userId = user.id;
+    entry.appendChild(img);
+    const meta = create("div", "presence-meta");
+    const name = create("strong");
+    name.textContent = user.name;
+    const tag = create("span");
+    tag.textContent = user.id;
+    tag.className = "profile-badge";
+    meta.append(name, tag);
+    entry.appendChild(meta);
+    entry.addEventListener("click", () => openProfile(user.id));
+    els.presenceList.appendChild(entry);
+  });
+}
+
+function wrapMentions(text) {
+  if (!text) return "";
+  const escaped = (state.user?.name || "").replace(/[.*+?^${}()|[\\]\\]/g, "\\$&");
+  const meRegex = escaped ? new RegExp(`@${escaped}`, "gi") : null;
   return text
     .replace(/@(\w[\w-]{0,28})/g, (match) => `<span class="mention">${match}</span>`)
-    .replace(meRegex, (match) => `<span class="mention highlight-me">${match}</span>`);
-}
-
-function createMessageElement(msg) {
-  const mine = msg.user && msg.user.id === me.id;
-  const wrap = document.createElement("article");
-  wrap.className = `msg${mine ? " me" : ""}`;
-  wrap.dataset.id = msg.id;
-  wrap.dataset.created = msg.createdAt;
-  wrap.addEventListener("mouseenter", () => {
-    quickReactTarget = msg.id;
-  });
-
-  const avatar = document.createElement("img");
-  avatar.className = "avatar";
-  avatar.alt = msg.user?.name || "user";
-  avatar.src = msg.user?.avatar ? makeAbsolute(msg.user.avatar) : avatarFallback(msg.user?.name || "User", 64);
-  avatar.onerror = () => {
-    avatar.src = avatarFallback(msg.user?.name || "User", 64);
-  };
-  wrap.appendChild(avatar);
-
-  const bubble = document.createElement("div");
-  bubble.className = "bubble";
-  bubble.tabIndex = 0;
-
-  const meta = document.createElement("header");
-  meta.className = "meta";
-  const tag = document.createElement("span");
-  tag.className = "name-tag";
-  tag.textContent = msg.user?.name || "Unknown";
-  tag.style.background = `linear-gradient(135deg, ${msg.user?.color || me.colorA}, ${me.colorB})`;
-  meta.appendChild(tag);
-  if (showTimestamps) {
-    const time = document.createElement("span");
-    time.className = "time";
-    time.textContent = timeShort(msg.createdAt);
-    meta.appendChild(time);
-  }
-  bubble.appendChild(meta);
-
-  if (msg.replyTo && msg.replySnapshot) {
-    const reply = document.createElement("div");
-    reply.className = "reply";
-    reply.innerHTML = `<strong>${msg.replySnapshot.user?.name || "User"}</strong> <span>${wrapMentions(
-      msg.replySnapshot.text || "(attachment)",
-      msg.replySnapshot
-    )}</span>`;
-    reply.addEventListener("click", () => scrollToMessage(msg.replyTo));
-    bubble.appendChild(reply);
-  }
-
-  if (msg.text) {
-    const text = document.createElement("div");
-    text.className = "text";
-    text.innerHTML = wrapMentions(msg.text, msg);
-    bubble.appendChild(text);
-  }
-
-  if (msg.attachment?.url) {
-    const at = document.createElement("div");
-    at.className = "attachment";
-    const img = document.createElement("img");
-    img.src = makeAbsolute(msg.attachment.url);
-    img.alt = "attachment";
-    img.loading = "lazy";
-    img.onerror = () => {
-      img.style.display = "none";
-      at.textContent = "Attachment unavailable";
-    };
-    at.appendChild(img);
-    bubble.appendChild(at);
-  }
-
-  const actions = document.createElement("div");
-  actions.className = "bubble-actions";
-  const replyBtn = document.createElement("button");
-  replyBtn.textContent = "Reply";
-  replyBtn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    startReply(msg);
-  });
-  const reactBtn = document.createElement("button");
-  reactBtn.textContent = "React";
-  reactBtn.addEventListener("click", (ev) => {
-    ev.stopPropagation();
-    quickReactTarget = msg.id;
-    togglePalette(true, reactBtn);
-  });
-  actions.appendChild(replyBtn);
-  actions.appendChild(reactBtn);
-  bubble.appendChild(actions);
-
-  const reactions = document.createElement("div");
-  reactions.className = "reactions";
-  bubble.appendChild(reactions);
-
-  wrap.appendChild(bubble);
-  return wrap;
-}
-
-function updateReactions(el, msg) {
-  const container = el.querySelector(".reactions");
-  container.innerHTML = "";
-  if (!msg.reactions) return;
-  Object.entries(msg.reactions)
-    .sort((a, b) => b[1].count - a[1].count)
-    .forEach(([emoji, data]) => {
-      if (!data.count) return;
-      const chip = document.createElement("button");
-      chip.className = "reaction-chip";
-      chip.textContent = `${emoji} ${data.count}`;
-      chip.title = data.users.map((u) => u.name).join(", ");
-      chip.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        toggleReaction(msg.id, emoji);
-      });
-      container.appendChild(chip);
-    });
+    .replace(meRegex || /$^/, (match) => `<span class="mention highlight-me">${match}</span>`);
 }
 
 function renderMessage(msg) {
-  let existing = chatMessages.get(msg.id);
-  if (!existing) {
-    const el = createMessageElement(msg);
-    chatMessages.set(msg.id, { data: msg, el });
-    feed.appendChild(el);
-    existing = chatMessages.get(msg.id);
-  } else {
-    existing.data = msg;
-    const bubble = existing.el.querySelector(".bubble");
-    bubble.querySelector(".meta .name-tag").textContent = msg.user?.name || "Unknown";
-    bubble.querySelector(".meta .name-tag").style.background = `linear-gradient(135deg, ${
-      msg.user?.color || me.colorA
-    }, ${me.colorB})`;
-    const timeEl = bubble.querySelector(".meta .time");
-    if (timeEl) timeEl.textContent = timeShort(msg.createdAt);
-    const replyEl = bubble.querySelector(".reply");
-    if (msg.replyTo && msg.replySnapshot) {
-      const html = `<strong>${msg.replySnapshot.user?.name || "User"}</strong> <span>${wrapMentions(
-        msg.replySnapshot.text || "(attachment)",
-        msg.replySnapshot
-      )}</span>`;
-      if (replyEl) replyEl.innerHTML = html;
-      else {
-        const r = document.createElement("div");
-        r.className = "reply";
-        r.innerHTML = html;
-        bubble.insertBefore(r, bubble.querySelector(".text"));
-      }
-    } else if (replyEl) {
-      replyEl.remove();
-    }
-    const textEl = bubble.querySelector(".text");
-    if (msg.text) {
-      if (textEl) textEl.innerHTML = wrapMentions(msg.text, msg);
-      else {
-        const t = document.createElement("div");
-        t.className = "text";
-        t.innerHTML = wrapMentions(msg.text, msg);
-        bubble.appendChild(t);
-      }
-    } else if (textEl) {
-      textEl.remove();
-    }
-    const attachEl = bubble.querySelector(".attachment img");
-    if (msg.attachment?.url) {
-      if (attachEl) {
-        attachEl.src = makeAbsolute(msg.attachment.url);
-      }
-    } else {
-      const att = bubble.querySelector(".attachment");
-      if (att) att.remove();
-    }
+  const article = create("article", "message");
+  article.dataset.id = msg.id;
+  article.dataset.conversationId = msg.conversationId;
+  const avatar = create("img", "avatar");
+  const color = msg.user?.color || state.accentStart;
+  avatar.src = msg.user?.avatar || avatarFallback(msg.user?.name, 64, color);
+  avatar.alt = msg.user?.name || "User";
+  avatar.dataset.userId = msg.user?.id;
+  avatar.addEventListener("click", () => openProfile(msg.user?.id));
+  article.appendChild(avatar);
+  const bubble = create("div", "bubble");
+  const header = create("div", "header");
+  const name = create("span", "name");
+  name.textContent = msg.user?.name || "Unknown";
+  header.appendChild(name);
+  if (state.showTimestamps) {
+    const time = create("span", "time");
+    time.textContent = formatTime(msg.createdAt);
+    header.appendChild(time);
   }
-  updateReactions(chatMessages.get(msg.id).el, msg);
-  scrollToBottom();
+  bubble.appendChild(header);
+  if (msg.replySnapshot) {
+    const reply = create("div", "reply-tag");
+    reply.innerHTML = `<strong>${msg.replySnapshot.user?.name || "User"}</strong> ${wrapMentions(
+      msg.replySnapshot.text || "(attachment)"
+    )}`;
+    bubble.appendChild(reply);
+  }
+  if (msg.text) {
+    const text = create("div", "text");
+    text.innerHTML = wrapMentions(msg.text);
+    bubble.appendChild(text);
+  }
+  if (msg.attachment?.url) {
+    const attachment = create("div", "attachment");
+    const img = create("img");
+    img.src = msg.attachment.url;
+    img.alt = "Attachment";
+    attachment.appendChild(img);
+    bubble.appendChild(attachment);
+  }
+  if (msg.reactions && Object.keys(msg.reactions).length) {
+    const reactions = create("div", "reactions");
+    Object.entries(msg.reactions).forEach(([emoji, data]) => {
+      const pill = create("button", "reaction-pill");
+      pill.textContent = `${emoji} ${data.count}`;
+      pill.addEventListener("click", () => toggleReaction(msg.id, emoji));
+      reactions.appendChild(pill);
+    });
+    bubble.appendChild(reactions);
+  }
+  bubble.addEventListener("dblclick", () => setReply(msg));
+  article.appendChild(bubble);
+  return article;
 }
 
-function renderSystem(text, ts = Date.now()) {
-  const div = document.createElement("div");
-  div.className = "system";
-  div.textContent = `${text} • ${timeShort(ts)}`;
-  feed.appendChild(div);
-  scrollToBottom();
+function renderMessages(conversationId) {
+  const messages = state.messages.get(conversationId) || [];
+  els.feed.innerHTML = "";
+  messages.forEach((msg) => {
+    const article = renderMessage(msg);
+    els.feed.appendChild(article);
+  });
+  scrollToBottom(true);
 }
 
-function refreshTimestamps() {
-  chatMessages.forEach(({ data, el }) => {
-    const timeEl = el.querySelector(".meta .time");
-    if (!timeEl && showTimestamps) {
-      const time = document.createElement("span");
-      time.className = "time";
-      time.textContent = timeShort(data.createdAt);
-      el.querySelector(".meta").appendChild(time);
-    } else if (timeEl && !showTimestamps) {
-      timeEl.remove();
-    } else if (timeEl && showTimestamps) {
-      timeEl.textContent = timeShort(data.createdAt);
+function updateTypingIndicator(conversationId) {
+  const typingUsers = state.typing.get(conversationId) || [];
+  if (!typingUsers.length) {
+    els.typing.classList.add("hidden");
+    els.typing.textContent = "";
+    return;
+  }
+  els.typing.classList.remove("hidden");
+  const names = typingUsers.slice(0, 3).map((u) => u.name);
+  const more = typingUsers.length > 3 ? "…" : "";
+  const verb = typingUsers.length > 1 ? "are" : "is";
+  els.typing.textContent = `${names.join(", ")} ${verb} typing${more}`;
+}
+
+function renderConversations() {
+  const realms = [];
+  const dms = [];
+  const groups = [];
+  state.conversations.forEach((convo) => {
+    if (convo.type === "realm") realms.push(convo);
+    else if (convo.type === "dm") dms.push(convo);
+    else groups.push(convo);
+    convo.members?.forEach((member) => state.users.set(member.id, member));
+  });
+
+  const makeChannel = (convo) => {
+    const btn = create("button", "channel");
+    btn.dataset.id = convo.id;
+    if (state.activeConversation === convo.id) btn.classList.add("active");
+    const avatar = create("img", "channel-avatar");
+    const title = convo.name || convo.members?.filter((m) => m.id !== state.user?.id)[0]?.name || "Conversation";
+    const iconColor = convo.members?.[0]?.color || state.accentStart;
+    avatar.src = convo.icon || avatarFallback(title, 32, iconColor);
+    avatar.alt = title;
+    const meta = create("div");
+    meta.className = "channel-meta";
+    const name = create("div", "channel-title");
+    name.textContent = title;
+    const sub = create("div", "channel-sub");
+    sub.textContent = `${convo.members?.length || 0} joined`;
+    meta.append(name, sub);
+    btn.append(avatar, meta);
+    btn.addEventListener("click", () => openConversation(convo.id));
+    return btn;
+  };
+
+  const fillList = (container, items, emptyText) => {
+    container.innerHTML = "";
+    if (!items.length) {
+      container.classList.add("empty-state");
+      container.textContent = emptyText;
+      return;
     }
+    container.classList.remove("empty-state");
+    items.forEach((convo) => container.appendChild(makeChannel(convo)));
+  };
+
+  fillList(els.realmList, realms, "No realms available");
+  fillList(els.dmList, dms, "No DMs yet");
+  fillList(els.groupList, groups, "Spin up a group to collaborate");
+
+  els.realmGuilds.innerHTML = "";
+  realms.forEach((convo) => {
+    const btn = create("button", `guild${state.activeConversation === convo.id ? " active" : ""}`);
+    btn.innerHTML = `<span class="guild-label">${(convo.name || "Realm").slice(0, 2).toUpperCase()}</span>`;
+    btn.addEventListener("click", () => openConversation(convo.id));
+    els.realmGuilds.appendChild(btn);
   });
 }
 
-function renderOnlineList() {
-  onlineListEl.innerHTML = "";
-  const list = Array.from(onlineUsers.values());
-  list.slice(0, 12).forEach((u) => {
-    const img = document.createElement("img");
-    img.alt = u.name;
-    img.title = u.name;
-    img.src = u.avatar ? makeAbsolute(u.avatar) : avatarFallback(u.name, 60);
-    img.onerror = () => {
-      img.src = avatarFallback(u.name, 60);
-    };
-    onlineListEl.appendChild(img);
-  });
-  onlineEl.textContent = `${list.length} online`;
-}
-
-function startReply(msg) {
-  pendingReply = { id: msg.id, text: msg.text, user: msg.user };
-  replyPreview.classList.remove("hidden");
-  replyUserEl.textContent = `Replying to ${msg.user?.name || "User"}`;
-  replyTextEl.textContent = (msg.text || "(attachment)").slice(0, 120);
-}
-
-function cancelReply() {
-  pendingReply = null;
-  replyPreview.classList.add("hidden");
-}
-
-cancelReplyBtn.addEventListener("click", cancelReply);
-
-function togglePalette(visible, anchor) {
-  if (visible) {
-    reactionPalette.classList.add("active");
-    if (anchor) {
-      const rect = anchor.getBoundingClientRect();
-      reactionPalette.style.position = "fixed";
-      reactionPalette.style.left = `${rect.left}px`;
-      reactionPalette.style.top = `${rect.top - 56}px`;
+function renderFriends() {
+  const { accepted, incoming, outgoing } = state.friends;
+  const fill = (container, list, build) => {
+    container.innerHTML = "";
+    if (!list.length) {
+      container.classList.add("empty-state");
+      container.textContent = container === els.pendingList ? "No pending invites" : "No friends added";
+      return;
     }
-  } else {
-    reactionPalette.classList.remove("active");
-    reactionPalette.style.removeProperty("left");
-    reactionPalette.style.removeProperty("top");
+    container.classList.remove("empty-state");
+    list.forEach((profile) => {
+      state.users.set(profile.id, profile);
+      container.appendChild(build(profile));
+    });
+  };
+
+  fill(els.friendsList, accepted, (profile) => {
+    const entry = create("div", "friend-entry");
+    const img = create("img");
+    img.src = profile.avatar || avatarFallback(profile.name, 40, profile.color);
+    img.alt = profile.name;
+    entry.appendChild(img);
+    const meta = create("div", "friend-meta");
+    meta.innerHTML = `<strong>${profile.name}</strong><span class="profile-badge">${profile.id}</span>`;
+    entry.appendChild(meta);
+    const actions = create("div", "friend-actions");
+    const dmBtn = create("button", "mini-btn");
+    dmBtn.textContent = "Message";
+    dmBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      startDirectMessage(profile.id);
+    });
+    const removeBtn = create("button", "mini-btn");
+    removeBtn.textContent = "Remove";
+    removeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      removeFriend(profile.id);
+    });
+    actions.append(dmBtn, removeBtn);
+    entry.appendChild(actions);
+    entry.addEventListener("click", () => openProfile(profile.id));
+    return entry;
+  });
+
+  const pendingProfiles = [...incoming, ...outgoing];
+  fill(els.pendingList, pendingProfiles, (profile) => {
+    const entry = create("div", "friend-entry");
+    const img = create("img");
+    img.src = profile.avatar || avatarFallback(profile.name, 40, profile.color);
+    img.alt = profile.name;
+    entry.appendChild(img);
+    const meta = create("div", "friend-meta");
+    const direction = incoming.some((p) => p.id === profile.id) ? "Incoming" : "Outgoing";
+    meta.innerHTML = `<strong>${profile.name}</strong><span class="profile-badge">${direction}</span>`;
+    entry.appendChild(meta);
+    const actions = create("div", "friend-actions");
+    if (incoming.some((p) => p.id === profile.id)) {
+      const accept = create("button", "mini-btn");
+      accept.textContent = "Accept";
+      accept.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        acceptFriend(profile.id);
+      });
+      actions.appendChild(accept);
+    }
+    entry.appendChild(actions);
+    entry.addEventListener("click", () => openProfile(profile.id));
+    return entry;
+  });
+}
+
+function updateInviteList(conversationId) {
+  if (!conversationId) return;
+  const convo = state.conversations.get(conversationId);
+  if (!convo) return;
+  const members = new Set((convo.members || []).map((m) => m.id));
+  els.inviteFriends.innerHTML = "";
+  const available = state.friends.accepted.filter((friend) => !members.has(friend.id));
+  if (!available.length) {
+    els.inviteFriends.classList.add("empty-state");
+    els.inviteFriends.textContent = "No friends available";
+    return;
+  }
+  els.inviteFriends.classList.remove("empty-state");
+  available.forEach((friend) => {
+    const entry = create("div", "friend-entry");
+    const img = create("img");
+    img.src = friend.avatar || avatarFallback(friend.name, 40, friend.color);
+    img.alt = friend.name;
+    entry.appendChild(img);
+    const meta = create("div", "friend-meta");
+    meta.innerHTML = `<strong>${friend.name}</strong><span class="profile-badge">${friend.id}</span>`;
+    entry.appendChild(meta);
+    const action = create("button", "mini-btn");
+    action.textContent = "Invite";
+    action.addEventListener("click", () => inviteToConversation(conversationId, friend.id));
+    entry.appendChild(action);
+    els.inviteFriends.appendChild(entry);
+  });
+}
+
+function setReply(msg) {
+  state.pendingReply = msg;
+  els.replyUser.textContent = msg.user?.name || "User";
+  els.replyText.innerHTML = wrapMentions(msg.text || "(attachment)");
+  els.replyPreview.classList.remove("hidden");
+}
+
+function clearReply() {
+  state.pendingReply = null;
+  els.replyPreview.classList.add("hidden");
+}
+
+function getFriendStatus(userId) {
+  if (!state.user || !userId) return "none";
+  if (userId === state.user.id) return "self";
+  if (state.friends.accepted.some((f) => f.id === userId)) return "accepted";
+  if (state.friends.incoming.some((f) => f.id === userId)) return "incoming";
+  if (state.friends.outgoing.some((f) => f.id === userId)) return "outgoing";
+  return "none";
+}
+
+function openProfile(userId) {
+  if (!userId) return;
+  const profile = state.users.get(userId);
+  if (!profile) return;
+  els.sheetName.textContent = profile.name;
+  els.sheetTag.textContent = profile.id;
+  els.sheetAvatar.src = profile.avatar || avatarFallback(profile.name, 96, profile.color);
+  els.sheetBanner.style.background = profile.banner || `linear-gradient(135deg, ${state.accentStart}, ${state.accentEnd})`;
+  const status = getFriendStatus(userId);
+  let friendLabel = "Add friend";
+  let friendAction = () => addFriend(userId);
+  if (status === "self") {
+    friendLabel = "That's you";
+    friendAction = null;
+  } else if (status === "accepted") {
+    friendLabel = "Remove friend";
+    friendAction = () => removeFriend(userId);
+  } else if (status === "incoming") {
+    friendLabel = "Accept request";
+    friendAction = () => acceptFriend(userId);
+  } else if (status === "outgoing") {
+    friendLabel = "Request sent";
+    friendAction = null;
+  }
+  els.sheetFriendBtn.textContent = friendLabel;
+  els.sheetFriendBtn.disabled = !friendAction;
+  els.sheetFriendBtn.onclick = friendAction;
+  els.sheetMessageBtn.textContent = userId === state.user.id ? "Edit profile" : "Message";
+  els.sheetMessageBtn.onclick = userId === state.user.id ? () => els.profileSheet.close() : () => startDirectMessage(userId);
+  if (typeof els.profileSheet.showModal === "function") {
+    els.profileSheet.showModal();
   }
 }
 
-reactionPalette.addEventListener("mouseleave", () => togglePalette(false));
-reactionPalette.addEventListener("click", (ev) => {
-  const emoji = ev.target?.dataset?.emoji;
-  if (!emoji || !quickReactTarget) return;
-  toggleReaction(quickReactTarget, emoji);
-  togglePalette(false);
-});
+function closeProfileSheet() {
+  if (els.profileSheet.open) els.profileSheet.close();
+}
 
-document.addEventListener("click", (event) => {
-  if (!reactionPalette.classList.contains("active")) return;
-  const target = event.target;
-  if (reactionPalette.contains(target)) return;
-  if (target.closest?.(".bubble-actions")) return;
-  togglePalette(false);
-});
+function openFriendModal() {
+  els.friendId.value = "";
+  if (typeof els.friendSheet.showModal === "function") els.friendSheet.showModal();
+}
+
+function closeFriendModal() {
+  if (els.friendSheet.open) els.friendSheet.close();
+}
+
+function openGroupModal() {
+  els.groupName.value = "";
+  els.groupBanner.value = state.banner || "#2f2b3a";
+  els.groupFriends.innerHTML = "";
+  if (!state.friends.accepted.length) {
+    const note = create("p", "muted");
+    note.textContent = "Add friends to invite them.";
+    els.groupFriends.appendChild(note);
+  } else {
+    state.friends.accepted.forEach((friend) => {
+      const pill = create("button", "friend-pill");
+      pill.dataset.id = friend.id;
+      pill.textContent = friend.name;
+      pill.addEventListener("click", () => {
+        pill.classList.toggle("selected");
+      });
+      els.groupFriends.appendChild(pill);
+    });
+  }
+  if (typeof els.groupSheet.showModal === "function") els.groupSheet.showModal();
+}
+
+function closeGroupModal() {
+  if (els.groupSheet.open) els.groupSheet.close();
+}
+
+function openInviteModal() {
+  if (!state.activeConversation) return;
+  updateInviteList(state.activeConversation);
+  if (typeof els.inviteSheet.showModal === "function") els.inviteSheet.showModal();
+}
+
+function closeInviteModal() {
+  if (els.inviteSheet.open) els.inviteSheet.close();
+}
+
+function handleJoin(response) {
+  if (!response?.ok) {
+    els.navStatus.textContent = response?.error || "Join failed";
+    return;
+  }
+  state.user = response.user;
+  localStorage.setItem("userId", state.user.id);
+  localStorage.setItem("name", state.user.name);
+  if (state.user.avatar) localStorage.setItem("avatarData", state.user.avatar);
+  if (state.user.color) setAccent(state.user.color, state.accentEnd);
+  state.conversations = new Map(response.conversations.map((c) => [c.id, c]));
+  state.friends = response.friends || state.friends;
+  updateComposerProfile();
+  renderConversations();
+  renderFriends();
+  els.navStatus.textContent = "Online";
+  els.app.classList.remove("hidden");
+  els.app.setAttribute("aria-hidden", "false");
+  els.intro.classList.add("hidden");
+  const defaultId = response.defaultConversationId || response.conversations[0]?.id;
+  if (defaultId) {
+    openConversation(defaultId);
+  }
+}
+
+function openConversation(conversationId) {
+  if (!conversationId) return;
+  if (state.activeConversation === conversationId) return;
+  state.activeConversation = conversationId;
+  const convo = state.conversations.get(conversationId);
+  if (!convo) {
+    socket.emit("conversation:open", { conversationId });
+    return;
+  }
+  els.inviteBtn.disabled = convo.type === "dm";
+  const title = convo.name || convo.members?.filter((m) => m.id !== state.user?.id)[0]?.name || "Conversation";
+  els.conversationTitle.textContent = title;
+  els.conversationSubtitle.textContent = `${convo.members?.length || 0} participants`;
+  const banner = convo.banner
+    ? convo.banner.startsWith("linear")
+      ? convo.banner
+      : `linear-gradient(135deg, ${convo.banner}, rgba(15, 17, 26, 0.85))`
+    : "linear-gradient(120deg, rgba(123, 97, 255, 0.45), rgba(18, 24, 42, 0.85))";
+  document.documentElement.style.setProperty("--workspace-banner", banner);
+  renderConversations();
+  renderMessages(conversationId);
+  renderPresence(conversationId);
+  updateTypingIndicator(conversationId);
+  socket.emit("conversation:open", { conversationId }, () => {});
+  setSendAvailability();
+}
+
+function pushMessage(msg) {
+  if (!msg?.conversationId) return;
+  const list = state.messages.get(msg.conversationId) || [];
+  const idx = list.findIndex((m) => m.id === msg.id);
+  if (idx >= 0) {
+    list[idx] = msg;
+  } else {
+    list.push(msg);
+    list.sort((a, b) => a.createdAt - b.createdAt);
+  }
+  state.messages.set(msg.conversationId, list);
+  state.users.set(msg.user?.id, msg.user);
+  if (state.activeConversation === msg.conversationId) {
+    renderMessages(msg.conversationId);
+  }
+}
+
+function setPresence(conversationId, users) {
+  state.presence.set(conversationId, users || []);
+  if (state.activeConversation === conversationId) {
+    renderPresence(conversationId);
+  }
+}
 
 function toggleReaction(messageId, emoji) {
-  socket.emit("message:react", { messageId, emoji }, (res) => {
-    if (!res?.ok) renderSystem(res?.error || "Reaction failed");
-  });
+  socket.emit("message:react", { messageId, emoji }, () => {});
 }
 
-function scrollToMessage(id) {
-  const entry = chatMessages.get(id);
-  if (!entry) return;
-  entry.el.scrollIntoView({ behavior: "smooth", block: "center" });
-  entry.el.classList.add("pulse");
-  setTimeout(() => entry.el.classList.remove("pulse"), 900);
-}
-
-function refreshHistory() {
-  socket.emit("history:request", { server: serverMode, limit: 300 }, (res) => {
-    if (!res?.ok) {
-      renderSystem(res?.error || "Failed to fetch history");
-    }
-  });
-}
-
-function syncPresence(list) {
-  onlineUsers = new Map(list.map((u) => [u.id, u]));
-  renderOnlineList();
-}
-
-function connectSocket() {
-  if (socket.connected) {
-    joinServer();
-    return;
-  }
-  if (isConnecting) return;
-  isConnecting = true;
-  socket.connect();
-}
-
-function joinServer() {
-  if (!me.id) {
-    me.id = crypto.randomUUID();
-    localStorage.setItem("userId", me.id);
-  }
-  const payload = {
-    id: me.id,
-    name: me.name || "Guest",
-    color: me.colorA,
-    avatar: me.avatar,
-    server: serverMode,
-  };
-  socket.emit("join", payload, (res) => {
-    if (res?.ok) {
-      activeServerEl.textContent = res.serverLabel;
-      syncPresence(res.online || []);
-      renderSystem(`Connected to ${res.serverLabel}`);
-    } else {
-      renderSystem(res?.error || "Failed to join");
-    }
-  });
-}
-
-socket.on("connect", () => {
-  isConnecting = false;
-  joinServer();
-});
-
-socket.on("disconnect", () => {
-  isConnecting = false;
-  renderSystem("Disconnected. Attempting to reconnect…");
-});
-
-socket.on("reconnect", () => {
-  isConnecting = false;
-  renderSystem("Reconnected");
-  joinServer();
-});
-
-socket.on("connect_error", () => {
-  isConnecting = false;
-});
-
-socket.on("history", (rows) => {
-  feed.innerHTML = "";
-  chatMessages.clear();
-  rows.forEach((row) => renderMessage(row));
-  scrollToBottom(true);
-});
-
-socket.on("message:new", (msg) => {
-  renderMessage(msg);
-  if (msg.replyTo && msg.replySnapshot && !chatMessages.has(msg.replyTo)) {
-    socket.emit("message:pull", { id: msg.replyTo, server: serverMode });
-  }
-});
-
-socket.on("message:update", (msg) => {
-  renderMessage(msg);
-});
-
-socket.on("message:batch", (msgs) => {
-  msgs.forEach((m) => renderMessage(m));
-});
-
-socket.on("message:reply", ({ base, reply }) => {
-  renderMessage(base);
-  renderMessage(reply);
-});
-
-socket.on("message:reactions", ({ messageId, reactions }) => {
-  const entry = chatMessages.get(messageId);
-  if (!entry) return;
-  entry.data.reactions = reactions;
-  updateReactions(entry.el, entry.data);
-});
-
-socket.on("presence:list", (list) => {
-  syncPresence(list);
-});
-
-socket.on("presence:user-joined", ({ user }) => {
-  onlineUsers.set(user.id, user);
-  renderOnlineList();
-  renderSystem(`${user.name} joined`);
-});
-
-socket.on("presence:user-left", ({ userId, name }) => {
-  onlineUsers.delete(userId);
-  renderOnlineList();
-  renderSystem(`${name || "Someone"} left`);
-});
-
-socket.on("presence:user-updated", ({ user }) => {
-  onlineUsers.set(user.id, user);
-  renderOnlineList();
-});
-
-socket.on("presence:typing", ({ userId, name, isTyping }) => {
-  if (userId === me.id) return;
-  if (isTyping) whoTyping.set(userId, name);
-  else whoTyping.delete(userId);
-  if (whoTyping.size === 0) {
-    typingEl.classList.add("hidden");
-    typingEl.textContent = "";
-    return;
-  }
-  const names = Array.from(whoTyping.values()).slice(0, 3);
-  typingEl.textContent = `${names.join(", ")} ${names.length > 1 ? "are" : "is"} typing…`;
-  typingEl.classList.remove("hidden");
-});
-
-let typingTimer;
-let typingSent = false;
-messageInput.addEventListener("input", () => {
-  if (!typingSent) {
-    typingSent = true;
-    socket.emit("presence:typing", true);
-  }
-  clearTimeout(typingTimer);
-  typingTimer = setTimeout(() => {
-    typingSent = false;
-    socket.emit("presence:typing", false);
-  }, 900);
-});
-
-messageInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter" && !e.shiftKey) {
-    e.preventDefault();
-    sendMessage();
-  }
-});
-
-sendBtn.addEventListener("click", () => sendMessage());
-
-function sendMessage(attachment = null) {
-  const text = messageInput.value.trim();
+function sendMessage() {
+  if (!state.activeConversation) return;
+  const text = els.messageInput.value.trim();
+  const attachment = state.pendingAttachment;
   if (!text && !attachment) return;
-  const payload = { text, attachment };
-  if (pendingReply) payload.replyTo = pendingReply.id;
-  socket.emit("message:send", payload, (res) => {
-    if (res?.ok) {
-      messageInput.value = "";
-      socket.emit("presence:typing", false);
-      cancelReply();
-    } else {
-      renderSystem(res?.error || "Message failed");
-    }
-  });
-}
-
-attachBtn.addEventListener("click", () => fileInput.click());
-fileInput.addEventListener("change", async () => {
-  const file = fileInput.files?.[0];
-  if (!file) return;
-  if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
-    renderSystem("Unsupported file type");
-    fileInput.value = "";
-    return;
-  }
-  if (file.size > 10 * 1024 * 1024) {
-    renderSystem("File too large (10 MB max)");
-    fileInput.value = "";
-    return;
-  }
-  try {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/upload", { method: "POST", body: form });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || "Upload failed");
-    sendMessage({ url: data.url });
-  } catch (err) {
-    renderSystem(`Upload error: ${err.message}`);
-  } finally {
-    fileInput.value = "";
-  }
-});
-
-avatarInput.addEventListener("change", async () => {
-  const file = avatarInput.files?.[0];
-  if (!file) return;
-  if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 5 * 1024 * 1024) {
-    renderSystem("Avatar must be PNG/JPEG/WEBP up to 5MB");
-    avatarInput.value = "";
-    return;
-  }
-  try {
-    const form = new FormData();
-    form.append("file", file);
-    const res = await fetch("/upload", { method: "POST", body: form });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || "Upload failed");
-    me.avatar = data.url;
-    localStorage.setItem("avatar", me.avatar);
-    avatarPreview.src = makeAbsolute(me.avatar);
-    socket.emit("settings:update", { avatar: me.avatar }, () => {});
-  } catch (err) {
-    renderSystem(`Avatar upload error: ${err.message}`);
-  } finally {
-    avatarInput.value = "";
-  }
-});
-
-settingsBtn.addEventListener("click", () => {
-  nameField.value = me.name;
-  colorAField.value = me.colorA;
-  colorBField.value = me.colorB;
-  bannerColorField.value = me.banner;
-  toggleTimestamps.checked = showTimestamps;
-  toggleAutoScroll.checked = autoScroll;
-  settingsDlg.showModal();
-});
-
-closeSettings.addEventListener("click", () => settingsDlg.close());
-
-saveSettings.addEventListener("click", (e) => {
-  e.preventDefault();
-  me.name = nameField.value.trim() || me.name || "Guest";
-  me.colorA = colorAField.value;
-  me.colorB = colorBField.value;
-  me.banner = bannerColorField.value;
-  showTimestamps = toggleTimestamps.checked;
-  autoScroll = toggleAutoScroll.checked;
-  localStorage.setItem("name", me.name);
-  localStorage.setItem("colorA", me.colorA);
-  localStorage.setItem("colorB", me.colorB);
-  localStorage.setItem("banner", me.banner);
-  localStorage.setItem("showTimestamps", showTimestamps ? "true" : "false");
-  localStorage.setItem("autoScroll", autoScroll ? "true" : "false");
-  applyNameGradient(me.colorA, me.colorB);
-  applyBanner(me.banner);
-  profileNameEl.textContent = me.name;
-  socket.emit("settings:update", { name: me.name, color: me.colorA, avatar: me.avatar }, () => {});
-  refreshTimestamps();
-  settingsDlg.close();
-});
-
-connectivityBtn.addEventListener("click", () => {
-  connectivityServer.value = serverMode;
-  toggleStars.checked = starsEnabled;
-  connectivityDlg.showModal();
-});
-
-closeConnectivity.addEventListener("click", () => connectivityDlg.close());
-
-applyConnectivity.addEventListener("click", (e) => {
-  e.preventDefault();
-  serverMode = connectivityServer.value;
-  starsEnabled = toggleStars.checked;
-  localStorage.setItem("serverMode", serverMode);
-  localStorage.setItem("starsEnabled", starsEnabled ? "true" : "false");
-  if (!starsEnabled) disableStars();
-  else enableStars();
-  connectivityDlg.close();
-  connectSocket();
-});
-
-toggleStarsBtn.addEventListener("click", () => {
-  starsEnabled = !starsEnabled;
-  localStorage.setItem("starsEnabled", starsEnabled ? "true" : "false");
-  if (starsEnabled) enableStars();
-  else disableStars();
-});
-
-bannerTheme.addEventListener("click", () => {
-  const palette = [
-    ["#7b61ff", "#52ffa1"],
-    ["#ff8ba7", "#ffc3a0"],
-    ["#3ac8ff", "#a890ff"],
-    ["#ffe66d", "#ff7eb9"],
-    ["#a5f3fc", "#60a5fa"],
-  ];
-  const [a, b] = palette[Math.floor(Math.random() * palette.length)];
-  me.colorA = a;
-  me.colorB = b;
-  localStorage.setItem("colorA", me.colorA);
-  localStorage.setItem("colorB", me.colorB);
-  applyNameGradient(a, b);
-  socket.emit("settings:update", { color: me.colorA }, () => {});
-});
-
-historyRefresh.addEventListener("click", refreshHistory);
-
-clearChatBtn.addEventListener("click", () => {
-  feed.innerHTML = "";
-  chatMessages.clear();
-  renderSystem("Local chat cleared");
-});
-
-function setupDragAndDrop() {
-  document.addEventListener("dragover", (e) => {
-    e.preventDefault();
-  });
-  document.addEventListener("drop", async (e) => {
-    if (!e.dataTransfer?.files?.length) return;
-    e.preventDefault();
-    const file = e.dataTransfer.files[0];
-    if (!file) return;
-    if (!/^image\/(png|jpeg|gif|webp)$/.test(file.type)) {
-      renderSystem("Only images supported for now");
-      return;
-    }
-    if (file.size > 10 * 1024 * 1024) {
-      renderSystem("File too large (10 MB max)");
-      return;
-    }
-    try {
-      const form = new FormData();
-      form.append("file", file);
-      const res = await fetch("/upload", { method: "POST", body: form });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Upload failed");
-      sendMessage({ url: data.url });
-    } catch (err) {
-      renderSystem(`Upload error: ${err.message}`);
-    }
-  });
-}
-
-function disableStars() {
-  if (!starsCanvas) return;
-  starsCanvas.style.opacity = "0";
-}
-
-function enableStars() {
-  if (!starsCanvas) return;
-  starsCanvas.style.opacity = "1";
-}
-
-function bootstrap() {
-  document.body.classList.add("ready");
-  profileNameEl.textContent = me.name || "Guest";
-  introName.value = me.name || "";
-  serverModeSelect.value = serverMode;
-  applyNameGradient(me.colorA, me.colorB);
-  applyBanner(me.banner);
-  avatarPreview.src = me.avatar ? makeAbsolute(me.avatar) : avatarFallback(me.name || "Guest", 64);
-  avatarPreview.onerror = () => {
-    avatarPreview.src = avatarFallback(me.name || "Guest", 64);
-  };
-  toggleTimestamps.checked = showTimestamps;
-  toggleAutoScroll.checked = autoScroll;
-  if (!starsEnabled) disableStars();
-  setupStarfield();
-  setupDragAndDrop();
-  if (me.name) {
-    connectSocket();
-  }
-}
-
-introStart.addEventListener("click", async () => {
-  const name = (introName.value || "").trim();
-  if (!name) {
-    introName.focus();
-    return;
-  }
-  me.name = name;
-  localStorage.setItem("name", me.name);
-  serverMode = serverModeSelect.value;
-  localStorage.setItem("serverMode", serverMode);
-  if (!me.id) {
-    me.id = crypto.randomUUID();
-    localStorage.setItem("userId", me.id);
-  }
-  if (introAvatar.files?.length) {
-    const file = introAvatar.files[0];
-    if (/^image\/(png|jpeg|webp)$/.test(file.type) && file.size <= 5 * 1024 * 1024) {
-      try {
-        const form = new FormData();
-        form.append("file", file);
-        const res = await fetch("/upload", { method: "POST", body: form });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error || "Upload failed");
-        me.avatar = data.url;
-        localStorage.setItem("avatar", me.avatar);
-      } catch (err) {
-        renderSystem(`Avatar upload error: ${err.message}`);
+  socket.emit(
+    "message:send",
+    {
+      conversationId: state.activeConversation,
+      text,
+      attachment,
+      replyTo: state.pendingReply?.id || null,
+    },
+    (res) => {
+      if (!res?.ok) {
+        els.navStatus.textContent = res?.error || "Send failed";
+        return;
       }
-    } else {
-      renderSystem("Avatar must be PNG/JPEG/WEBP under 5MB");
+      els.messageInput.value = "";
+      state.pendingAttachment = null;
+      state.pendingAttachmentName = null;
+      els.composerHint.textContent = "Shift + Enter for newline";
+      clearReply();
+      setSendAvailability();
+      emitTyping(false);
     }
-  }
-  avatarPreview.src = me.avatar ? makeAbsolute(me.avatar) : avatarFallback(me.name, 64);
-  intro.classList.add("hide");
-  document.body.classList.remove("no-scroll");
-  setTimeout(() => {
-    intro.style.display = "none";
-    qs("#app").setAttribute("aria-hidden", "false");
-  }, 360);
-  connectSocket();
-});
-
-function setupStarfield() {
-  if (!starsCanvas) return;
-  const ctx = starsCanvas.getContext("2d");
-  let w = 0;
-  let h = 0;
-  let stars = [];
-
-  function createStars(n) {
-    const arr = [];
-    for (let i = 0; i < n; i++) {
-      arr.push({
-        x: Math.random() * w,
-        y: Math.random() * h,
-        r: Math.random() * 1.6 + 0.4,
-        a: Math.random() * 0.9 + 0.1,
-        dx: (Math.random() - 0.5) * 0.5,
-        dy: (Math.random() - 0.5) * 0.5,
-        twinkle: Math.random() * 0.02 + 0.01,
-      });
-    }
-    return arr;
-  }
-
-  function resize() {
-    const DPR = Math.min(2, devicePixelRatio || 1);
-    w = innerWidth;
-    h = innerHeight;
-    starsCanvas.width = w * DPR;
-    starsCanvas.height = h * DPR;
-    starsCanvas.style.width = `${w}px`;
-    starsCanvas.style.height = `${h}px`;
-    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-    const density = Math.min(620, Math.round((w * h) / 4200));
-    stars = createStars(density);
-  }
-
-  function draw() {
-    if (!starsEnabled) {
-      ctx.clearRect(0, 0, w, h);
-      requestAnimationFrame(draw);
-      return;
-    }
-    ctx.clearRect(0, 0, w, h);
-    for (const star of stars) {
-      star.a += (Math.random() - 0.5) * star.twinkle;
-      star.a = Math.max(0.08, Math.min(1, star.a));
-      star.x += star.dx * 0.4;
-      star.y += star.dy * 0.4;
-      if (star.x < 0) star.x = w;
-      if (star.x > w) star.x = 0;
-      if (star.y < 0) star.y = h;
-      if (star.y > h) star.y = 0;
-      const grad = ctx.createRadialGradient(star.x, star.y, 0, star.x, star.y, 5 + star.r * 3);
-      grad.addColorStop(0, `rgba(255,255,255,${star.a})`);
-      grad.addColorStop(0.6, `rgba(170, 160, 255, ${star.a * 0.35})`);
-      grad.addColorStop(1, `rgba(0,0,0,0)`);
-      ctx.fillStyle = grad;
-      ctx.beginPath();
-      ctx.arc(star.x, star.y, star.r * 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    requestAnimationFrame(draw);
-  }
-
-  addEventListener("resize", resize);
-  resize();
-  draw();
+  );
 }
 
-bootstrap();
+function uploadFile(file) {
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  fetch("/upload", { method: "POST", body: form })
+    .then((res) => res.json())
+    .then((json) => {
+      if (json?.url) {
+        state.pendingAttachment = { url: json.url };
+        state.pendingAttachmentName = file.name;
+        els.composerHint.textContent = `Attachment ready: ${file.name}`;
+        setSendAvailability();
+      }
+    })
+    .catch(() => {
+      els.navStatus.textContent = "Upload failed";
+    });
+}
+
+function addFriend(targetId) {
+  if (!targetId) return;
+  socket.emit("friend:add", { targetId }, (res) => {
+    if (res?.friends) {
+      state.friends = res.friends;
+      renderFriends();
+    }
+  });
+}
+
+function acceptFriend(targetId) {
+  socket.emit("friend:accept", { targetId }, (res) => {
+    if (res?.friends) {
+      state.friends = res.friends;
+      renderFriends();
+    }
+  });
+}
+
+function removeFriend(targetId) {
+  socket.emit("friend:remove", { targetId }, (res) => {
+    if (res?.friends) {
+      state.friends = res.friends;
+      renderFriends();
+    }
+  });
+}
+
+function inviteToConversation(conversationId, targetId) {
+  socket.emit("conversation:invite", { conversationId, targetId }, (res) => {
+    if (res?.ok) {
+      closeInviteModal();
+    }
+  });
+}
+
+function startDirectMessage(targetId) {
+  if (!targetId) return;
+  socket.emit("conversation:start-dm", { targetId }, (res) => {
+    if (res?.conversation) {
+      state.conversations.set(res.conversation.id, res.conversation);
+      renderConversations();
+      openConversation(res.conversation.id);
+    }
+  });
+}
+
+function handleFriendForm(event) {
+  event.preventDefault();
+  const id = els.friendId.value.trim();
+  if (!id) return;
+  addFriend(id);
+  els.friendId.value = "";
+  closeFriendModal();
+}
+
+function handleGroupForm(event) {
+  event.preventDefault();
+  const members = Array.from(els.groupFriends.querySelectorAll(".friend-pill.selected")).map((pill) => pill.dataset.id);
+  socket.emit(
+    "conversation:create",
+    {
+      name: els.groupName.value.trim() || "Group Chat",
+      banner: els.groupBanner.value,
+      members,
+    },
+    (res) => {
+      if (res?.conversation) {
+        state.conversations.set(res.conversation.id, res.conversation);
+        renderConversations();
+        openConversation(res.conversation.id);
+        closeGroupModal();
+      }
+    }
+  );
+}
+
+function initSocketEvents() {
+  socket.on("connect", () => {
+    els.navStatus.textContent = "Connecting to Nexus";
+    if (state.user) {
+      socket.emit(
+        "join",
+        {
+          id: state.user.id,
+          name: state.user.name,
+          color: state.accentStart,
+          avatar: state.user.avatar,
+          banner: state.banner,
+        },
+        handleJoin
+      );
+    }
+  });
+
+  socket.on("disconnect", () => {
+    els.navStatus.textContent = "Disconnected";
+  });
+
+  socket.on("history", ({ conversationId, messages }) => {
+    if (!conversationId) return;
+    state.messages.set(conversationId, messages || []);
+    messages?.forEach((msg) => state.users.set(msg.user?.id, msg.user));
+    if (conversationId === state.activeConversation) {
+      renderMessages(conversationId);
+    }
+  });
+
+  socket.on("message:new", (msg) => {
+    pushMessage(msg);
+  });
+
+  socket.on("message:update", (msg) => {
+    pushMessage(msg);
+  });
+
+  socket.on("conversation:updated", (convo) => {
+    if (!convo?.id) return;
+    state.conversations.set(convo.id, convo);
+    renderConversations();
+    if (convo.id === state.activeConversation) {
+      els.conversationSubtitle.textContent = `${convo.members?.length || 0} participants`;
+      renderPresence(convo.id);
+    }
+  });
+
+  socket.on("presence:list", ({ conversationId, users }) => {
+    if (!conversationId) return;
+    setPresence(conversationId, users);
+  });
+
+  socket.on("presence:user-joined", ({ conversationId, user }) => {
+    if (!conversationId || !user) return;
+    const list = presenceFor(conversationId);
+    const map = new Map(list.map((u) => [u.id, u]));
+    map.set(user.id, user);
+    setPresence(conversationId, Array.from(map.values()));
+  });
+
+  socket.on("presence:user-left", ({ conversationId, userId }) => {
+    if (!conversationId || !userId) return;
+    const list = presenceFor(conversationId).filter((u) => u.id !== userId);
+    setPresence(conversationId, list);
+  });
+
+  socket.on("presence:typing", ({ conversationId, userId, name, isTyping }) => {
+    if (!conversationId || !userId) return;
+    const list = state.typing.get(conversationId) || [];
+    const exists = list.find((u) => u.id === userId);
+    if (isTyping) {
+      if (!exists) list.push({ id: userId, name });
+    } else if (exists) {
+      const idx = list.indexOf(exists);
+      list.splice(idx, 1);
+    }
+    state.typing.set(conversationId, list);
+    if (conversationId === state.activeConversation) updateTypingIndicator(conversationId);
+  });
+
+  socket.on("friends:update", (friends) => {
+    if (friends) {
+      state.friends = friends;
+      renderFriends();
+    }
+  });
+}
+
+function emitTyping(isTyping) {
+  if (!state.activeConversation) return;
+  socket.emit("presence:typing", {
+    conversationId: state.activeConversation,
+    isTyping,
+  });
+}
+
+function initUI() {
+  setAccent(state.accentStart, state.accentEnd);
+  els.toggleAutoScroll.checked = state.autoScroll;
+  els.toggleTimestamps.checked = state.showTimestamps;
+  els.accentStart.value = state.accentStart;
+  els.accentEnd.value = state.accentEnd;
+  els.introBanner.value = state.banner;
+
+  els.accentStart.addEventListener("change", (ev) => setAccent(ev.target.value, state.accentEnd));
+  els.accentEnd.addEventListener("change", (ev) => setAccent(state.accentStart, ev.target.value));
+  els.introBanner.addEventListener("change", (ev) => setBanner(ev.target.value));
+
+  els.toggleAutoScroll.addEventListener("change", (ev) => {
+    state.autoScroll = ev.target.checked;
+    localStorage.setItem("autoScroll", String(ev.target.checked));
+  });
+
+  els.toggleTimestamps.addEventListener("change", (ev) => {
+    state.showTimestamps = ev.target.checked;
+    localStorage.setItem("showTimestamps", String(ev.target.checked));
+    if (state.activeConversation) renderMessages(state.activeConversation);
+  });
+
+  els.introStart.addEventListener("click", async () => {
+    const name = els.introName.value.trim() || "Guest";
+    let avatarData = localStorage.getItem("avatarData") || "";
+    const file = els.introAvatar.files?.[0];
+    if (file) {
+      avatarData = await fileToDataUrl(file);
+      localStorage.setItem("avatarData", avatarData);
+    }
+    const id = localStorage.getItem("userId") || `user-${crypto.randomUUID().slice(0, 8)}`;
+    localStorage.setItem("userId", id);
+    localStorage.setItem("name", name);
+    setAccent(els.accentStart.value, els.accentEnd.value);
+    setBanner(els.introBanner.value);
+    state.user = {
+      id,
+      name,
+      avatar: avatarData,
+      banner: els.introBanner.value,
+    };
+    updateComposerProfile();
+    socket.connect();
+  });
+
+  els.messageInput.addEventListener("input", () => {
+    setSendAvailability();
+    if (state.typingTimer) clearTimeout(state.typingTimer);
+    emitTyping(true);
+    state.typingTimer = setTimeout(() => emitTyping(false), 1000);
+  });
+
+  els.messageInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter" && !ev.shiftKey) {
+      ev.preventDefault();
+      sendMessage();
+    }
+  });
+
+  els.messageInput.addEventListener("blur", () => emitTyping(false));
+
+  els.sendBtn.addEventListener("click", sendMessage);
+  els.attachBtn.addEventListener("click", () => els.fileInput.click());
+  els.fileInput.addEventListener("change", (ev) => {
+    const file = ev.target.files?.[0];
+    if (file) uploadFile(file);
+  });
+
+  els.addFriendBtn.addEventListener("click", openFriendModal);
+  els.closeFriend.addEventListener("click", closeFriendModal);
+  els.friendForm.addEventListener("submit", handleFriendForm);
+
+  els.profileBtn.addEventListener("click", () => openProfile(state.user?.id));
+  els.closeProfile.addEventListener("click", closeProfileSheet);
+
+  els.createGroupBtn.addEventListener("click", openGroupModal);
+  els.closeGroup.addEventListener("click", closeGroupModal);
+  els.groupForm.addEventListener("submit", handleGroupForm);
+
+  els.inviteBtn.addEventListener("click", openInviteModal);
+  els.closeInvite.addEventListener("click", closeInviteModal);
+
+  els.cancelReply.addEventListener("click", clearReply);
+  els.startDmBtn.addEventListener("click", () => {
+    const friend = state.friends.accepted[0];
+    if (friend) startDirectMessage(friend.id);
+    else openFriendModal();
+  });
+
+  els.homeButton.addEventListener("click", () => {
+    if (state.conversations.size) {
+      const firstRealm = [...state.conversations.values()].find((c) => c.type === "realm") || [...state.conversations.values()][0];
+      if (firstRealm) openConversation(firstRealm.id);
+    }
+  });
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function resumeSession() {
+  const storedId = localStorage.getItem("userId");
+  const storedName = localStorage.getItem("name");
+  const avatarData = localStorage.getItem("avatarData");
+  if (storedId && storedName) {
+    state.user = {
+      id: storedId,
+      name: storedName,
+      avatar: avatarData,
+      banner: state.banner,
+    };
+    els.introName.value = storedName;
+    updateComposerProfile();
+    socket.connect();
+  }
+}
+
+initSocketEvents();
+initUI();
+resumeSession();

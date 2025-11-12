@@ -16,7 +16,11 @@ const UPLOAD_DIR = path.join(DATA_DIR, "uploads");
 const DB_FILE = path.join(DATA_DIR, "messages.db");
 const MAX_UPLOAD_MB = 10;
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-const VORTEX_BASE = process.env.VORTEX_API_BASE || "https://waveunblockedddd.github.io";
+
+const DEFAULT_REALM_ID = "realm-deblocked";
+const DEFAULT_REALM_NAME = "Deblocked Realm";
+const DEFAULT_REALM_ICON = "/assets/deblocked-icon.svg";
+const DEFAULT_REALM_BANNER = "linear-gradient(135deg, #7b61ff, #ad83ff)";
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
@@ -29,29 +33,49 @@ db.serialize(() => {
   db.run(`PRAGMA foreign_keys = ON;`);
   db.run(`PRAGMA busy_timeout = 3000;`);
   db.run(`
-    CREATE TABLE IF NOT EXISTS messages (
+    CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
-      server TEXT DEFAULT 'deblocked',
-      source TEXT DEFAULT 'deblocked',
-      userId TEXT,
       name TEXT,
       color TEXT,
       avatar TEXT,
-      text TEXT,
-      attachment TEXT,
-      replyTo TEXT,
-      synced INTEGER DEFAULT 1,
+      banner TEXT,
+      lastSeen INTEGER
+    );
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      name TEXT,
+      icon TEXT,
+      banner TEXT,
+      createdBy TEXT,
       createdAt INTEGER
     );
   `);
   db.run(`
-    CREATE TABLE IF NOT EXISTS users (
+    CREATE TABLE IF NOT EXISTS conversation_members (
+      conversationId TEXT,
+      userId TEXT,
+      role TEXT,
+      nickname TEXT,
+      joinedAt INTEGER,
+      lastRead INTEGER DEFAULT 0,
+      PRIMARY KEY(conversationId, userId),
+      FOREIGN KEY(conversationId) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS messages (
       id TEXT PRIMARY KEY,
-      server TEXT DEFAULT 'deblocked',
-      name TEXT,
-      color TEXT,
-      avatar TEXT,
-      lastSeen INTEGER
+      conversationId TEXT,
+      userId TEXT,
+      text TEXT,
+      attachment TEXT,
+      replyTo TEXT,
+      createdAt INTEGER,
+      FOREIGN KEY(conversationId) REFERENCES conversations(id) ON DELETE CASCADE
     );
   `);
   db.run(`
@@ -59,15 +83,23 @@ db.serialize(() => {
       id TEXT PRIMARY KEY,
       messageId TEXT,
       userId TEXT,
-      server TEXT,
       emoji TEXT,
       createdAt INTEGER,
       UNIQUE(messageId, userId, emoji)
     );
   `);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_messages_server ON messages(server, createdAt);`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_users_server ON users(server);`);
-  db.run(`CREATE INDEX IF NOT EXISTS idx_reactions_msg ON reactions(messageId);`);
+  db.run(`
+    CREATE TABLE IF NOT EXISTS relationships (
+      ownerId TEXT,
+      targetId TEXT,
+      status TEXT,
+      createdAt INTEGER,
+      PRIMARY KEY(ownerId, targetId)
+    );
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversationId, createdAt);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(messageId);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_relationships_owner ON relationships(ownerId);`);
 });
 
 const ensureColumn = (table, column, type) => {
@@ -78,11 +110,10 @@ const ensureColumn = (table, column, type) => {
   });
 };
 
-ensureColumn("messages", "server", "TEXT DEFAULT 'deblocked'");
-ensureColumn("messages", "source", "TEXT DEFAULT 'deblocked'");
+ensureColumn("users", "banner", "TEXT");
 ensureColumn("messages", "replyTo", "TEXT");
-ensureColumn("messages", "synced", "INTEGER DEFAULT 1");
-ensureColumn("users", "server", "TEXT DEFAULT 'deblocked'");
+ensureColumn("messages", "attachment", "TEXT");
+ensureColumn("messages", "conversationId", "TEXT");
 
 const storage = multer.diskStorage({
   destination: (_, __, cb) => cb(null, UPLOAD_DIR),
@@ -139,7 +170,7 @@ app.use(
 );
 
 app.get("/health", (_, res) => res.json({ ok: true }));
-app.get("/version", (_, res) => res.json({ name: "Deblocked Chat V3 Ultra", version: "3.0.0" }));
+app.get("/version", (_, res) => res.json({ name: "Deblocked Chat Ultra", version: "4.0.0" }));
 
 app.post("/upload", (req, res, next) => {
   upload.single("file")(req, res, (err) => {
@@ -154,53 +185,14 @@ app.post("/upload", (req, res, next) => {
   });
 });
 
-app.get("/history", (req, res) => {
-  const limit = Math.min(500, parseInt(req.query.limit, 10) || 200);
-  const server = req.query.server === "vortex" ? "vortex" : "deblocked";
-  const since = parseInt(req.query.since, 10) || 0;
-  const sql = `SELECT * FROM messages WHERE server = ? AND createdAt > ? ORDER BY createdAt ASC LIMIT ?`;
-  db.all(sql, [server, since, limit], (err, rows) => {
-    if (err) return res.status(500).json({ error: "db error" });
-    res.json({ messages: rows || [] });
-  });
-});
-
-app.get("/online", (req, res) => {
-  const server = req.query.server === "vortex" ? "vortex" : "deblocked";
-  res.json({ online: Array.from(presence[server].values()) });
-});
-
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: true, credentials: true },
   transports: ["websocket", "polling"],
 });
 
-const socketsMeta = new Map();
-const presence = {
-  deblocked: new Map(),
-  vortex: new Map(),
-};
-
-const vortexCache = {
-  users: [],
-  messages: [],
-  fetchedUsersAt: 0,
-  fetchedMessagesAt: 0,
-};
-
 function now() {
   return Date.now();
-}
-
-function makeSystem(text, serverKey) {
-  return {
-    id: uuidv4(),
-    system: true,
-    text,
-    server: serverKey,
-    createdAt: now(),
-  };
 }
 
 function runAsync(sql, params = []) {
@@ -221,181 +213,89 @@ function allAsync(sql, params = []) {
   });
 }
 
-async function fetchJson(url) {
-  try {
-    const res = await fetch(url, { headers: { "User-Agent": "Deblocked-Chat-V3" } });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return await res.json();
-  } catch (err) {
-    console.warn("Fetch error", url, err.message);
-    return null;
-  }
-}
-
-async function loadVortexUsers(force = false) {
-  if (!force && now() - vortexCache.fetchedUsersAt < 60_000 && vortexCache.users.length) {
-    return vortexCache.users;
-  }
-  const data =
-    (await fetchJson(`${VORTEX_BASE}/api/vortex/users.json`)) ||
-    (await fetchJson(`${VORTEX_BASE}/users.json`));
-  if (Array.isArray(data)) {
-    vortexCache.users = data.slice(0, 200).map((u) => ({
-      id: u.id || u.userId || uuidv4(),
-      name: u.name || u.username || "Vortex User",
-      avatar: u.avatar || u.photo || "",
-      color: u.color || "#60a5fa",
-    }));
-    vortexCache.fetchedUsersAt = now();
-  }
-  return vortexCache.users;
-}
-
-async function loadVortexMessages(force = false) {
-  if (!force && now() - vortexCache.fetchedMessagesAt < 25_000 && vortexCache.messages.length) {
-    return vortexCache.messages;
-  }
-  const data =
-    (await fetchJson(`${VORTEX_BASE}/api/vortex/messages.json`)) ||
-    (await fetchJson(`${VORTEX_BASE}/messages.json`));
-  if (Array.isArray(data)) {
-    vortexCache.messages = data
-      .slice(-200)
-      .map((m) => ({
-        id: m.id || uuidv4(),
-        server: "vortex",
-        source: "vortex:remote",
-        user: {
-          id: m.userId || m.authorId || uuidv4(),
-          name: m.name || m.author || "Vortex User",
-          color: m.color || "#3ac8ff",
-          avatar: m.avatar || m.photo || "",
-        },
-        text: m.text || m.message || "",
-        attachment: m.attachment ? { url: m.attachment } : null,
-        createdAt: m.createdAt || now(),
-        replyTo: m.replyTo || null,
-      }));
-    vortexCache.fetchedMessagesAt = now();
-  }
-  return vortexCache.messages;
-}
-
-async function pushVortexMessage(msg) {
-  try {
-    const endpoint = `${VORTEX_BASE}/api/vortex/ingest`;
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(msg),
+function getAsync(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => {
+      if (err) return reject(err);
+      resolve(row);
     });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return true;
-  } catch (err) {
-    console.warn("Vortex send failed", err.message);
-    return false;
+  });
+}
+
+async function ensureDefaultRealm() {
+  const realm = await getAsync(`SELECT * FROM conversations WHERE id = ?`, [DEFAULT_REALM_ID]);
+  if (!realm) {
+    await runAsync(
+      `INSERT INTO conversations (id, type, name, icon, banner, createdBy, createdAt) VALUES (?, 'realm', ?, ?, ?, ?, ?)`,
+      [
+        DEFAULT_REALM_ID,
+        DEFAULT_REALM_NAME,
+        DEFAULT_REALM_ICON,
+        DEFAULT_REALM_BANNER,
+        "system",
+        now(),
+      ]
+    );
   }
 }
 
-async function upsertUser(user, serverKey) {
+async function ensureMember(conversationId, userId, role = "member") {
+  await runAsync(
+    `INSERT OR IGNORE INTO conversation_members (conversationId, userId, role, joinedAt) VALUES (?, ?, ?, ?)`,
+    [conversationId, userId, role, now()]
+  );
+}
+
+async function upsertUser(user) {
   const stmt = `
-    INSERT INTO users (id, server, name, color, avatar, lastSeen)
+    INSERT INTO users (id, name, color, avatar, banner, lastSeen)
     VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
-      server = excluded.server,
       name = excluded.name,
       color = excluded.color,
       avatar = excluded.avatar,
+      banner = excluded.banner,
       lastSeen = excluded.lastSeen
   `;
-  await runAsync(stmt, [user.id, serverKey, user.name, user.color || "#7b61ff", user.avatar || "", now()]);
-}
-
-async function persistMessage(msg) {
-  const sql = `
-    INSERT INTO messages (id, server, source, userId, name, color, avatar, text, attachment, replyTo, synced, createdAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `;
-  await runAsync(sql, [
-    msg.id,
-    msg.server,
-    msg.source,
-    msg.user.id,
-    msg.user.name,
-    msg.user.color,
-    msg.user.avatar || "",
-    msg.text || "",
-    msg.attachment?.url || null,
-    msg.replyTo || null,
-    msg.synced ? 1 : 0,
-    msg.createdAt,
+  await runAsync(stmt, [
+    user.id,
+    user.name,
+    user.color || "#7b61ff",
+    user.avatar || "",
+    user.banner || "",
+    now(),
   ]);
 }
 
-async function saveReaction({ id, messageId, userId, server, emoji }) {
-  const sql = `
-    INSERT INTO reactions (id, messageId, userId, server, emoji, createdAt)
-    VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(messageId, userId, emoji) DO UPDATE SET createdAt = excluded.createdAt
-  `;
-  await runAsync(sql, [id, messageId, userId, server, emoji, now()]);
+async function recordMessage(msg) {
+  await runAsync(
+    `INSERT INTO messages (id, conversationId, userId, text, attachment, replyTo, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    [
+      msg.id,
+      msg.conversationId,
+      msg.userId,
+      msg.text || "",
+      msg.attachment || null,
+      msg.replyTo || null,
+      msg.createdAt,
+    ]
+  );
 }
 
-async function removeReaction({ messageId, userId, emoji }) {
-  await runAsync(`DELETE FROM reactions WHERE messageId = ? AND userId = ? AND emoji = ?`, [
-    messageId,
-    userId,
-    emoji,
-  ]);
-}
-
-async function enrichMessage(row) {
-  const reactionMap = await buildReactionMap(row.id, row.server);
-  let replySnapshot = null;
-  if (row.replyTo) {
-    const parent = await allAsync(`SELECT * FROM messages WHERE id = ? LIMIT 1`, [row.replyTo]);
-    if (parent?.[0]) {
-      replySnapshot = rowToMessage(parent[0]);
-    }
-  }
-  return Object.assign(rowToMessage(row), { reactions: reactionMap, replySnapshot });
-}
-
-function rowToMessage(row) {
-  return {
-    id: row.id,
-    server: row.server,
-    source: row.source,
-    user: {
-      id: row.userId,
-      name: row.name,
-      color: row.color,
-      avatar: row.avatar,
-    },
-    text: row.text,
-    attachment: row.attachment ? { url: row.attachment } : null,
-    replyTo: row.replyTo || null,
-    createdAt: row.createdAt,
-  };
-}
-
-async function buildReactionMap(messageId, serverKey) {
+async function buildReactionMap(messageId) {
   const rows = await allAsync(`SELECT emoji, userId FROM reactions WHERE messageId = ?`, [messageId]);
   const map = {};
-  const ids = new Set();
-  rows.forEach((row) => {
+  for (const row of rows) {
     if (!map[row.emoji]) map[row.emoji] = { count: 0, users: [] };
     map[row.emoji].count += 1;
     map[row.emoji].users.push({ id: row.userId });
-    ids.add(row.userId);
-  });
-  if (!ids.size) return map;
-  const placeholders = Array.from(ids)
-    .map(() => "?")
-    .join(",");
+  }
+  if (!Object.keys(map).length) return map;
+  const ids = Array.from(new Set(rows.map((row) => row.userId)));
+  const placeholders = ids.map(() => "?").join(",");
   const users = await allAsync(
     `SELECT id, name, avatar, color FROM users WHERE id IN (${placeholders})`,
-    Array.from(ids)
+    ids
   ).catch(() => []);
   const userMap = {};
   users.forEach((u) => {
@@ -407,99 +307,319 @@ async function buildReactionMap(messageId, serverKey) {
   return map;
 }
 
-async function listHistory(serverKey, limit = 200) {
+async function fetchMessage(id) {
+  const row = await getAsync(`SELECT * FROM messages WHERE id = ?`, [id]);
+  if (!row) return null;
+  const user = await getAsync(`SELECT id, name, color, avatar, banner FROM users WHERE id = ?`, [row.userId]);
+  const reply = row.replyTo ? await fetchMessage(row.replyTo) : null;
+  const reactions = await buildReactionMap(row.id);
+  return {
+    id: row.id,
+    conversationId: row.conversationId,
+    text: row.text,
+    attachment: row.attachment ? { url: row.attachment } : null,
+    replyTo: row.replyTo,
+    createdAt: row.createdAt,
+    user,
+    reactions,
+    replySnapshot: reply
+      ? {
+          id: reply.id,
+          text: reply.text,
+          user: reply.user,
+        }
+      : null,
+  };
+}
+
+async function listHistory(conversationId, limit = 250) {
   const rows = await allAsync(
-    `SELECT * FROM messages WHERE server = ? ORDER BY createdAt ASC LIMIT ?`,
-    [serverKey, limit]
+    `SELECT * FROM messages WHERE conversationId = ? ORDER BY createdAt ASC LIMIT ?`,
+    [conversationId, limit]
   );
-  const enriched = [];
+  const messages = [];
   for (const row of rows) {
-    enriched.push(await enrichMessage(row));
+    const msg = await fetchMessage(row.id);
+    if (msg) messages.push(msg);
   }
-  return enriched;
+  return messages;
 }
 
-async function broadcastHistory(socket, serverKey) {
-  const history = await listHistory(serverKey, 250);
-  socket.emit("history", history);
+async function conversationSummary(conversationId) {
+  const convo = await getAsync(`SELECT * FROM conversations WHERE id = ?`, [conversationId]);
+  if (!convo) return null;
+  const members = await allAsync(
+    `SELECT users.id, users.name, users.avatar, users.color, users.banner FROM conversation_members JOIN users ON users.id = conversation_members.userId WHERE conversation_members.conversationId = ?`,
+    [conversationId]
+  );
+  return {
+    id: convo.id,
+    type: convo.type,
+    name: convo.name,
+    icon: convo.icon,
+    banner: convo.banner,
+    createdBy: convo.createdBy,
+    createdAt: convo.createdAt,
+    members,
+  };
 }
 
-function presenceLabel(serverKey) {
-  return serverKey === "vortex" ? "Vortex Realm" : "Deblocked Realm";
+async function listUserConversations(userId) {
+  const rows = await allAsync(
+    `SELECT conversationId FROM conversation_members WHERE userId = ?`,
+    [userId]
+  );
+  const conversations = [];
+  for (const row of rows) {
+    const summary = await conversationSummary(row.conversationId);
+    if (summary) conversations.push(summary);
+  }
+  conversations.sort((a, b) => (a.type === "realm" ? -1 : 1));
+  return conversations;
 }
+
+async function getOrCreateDM(userA, userB) {
+  const participants = [userA, userB].sort();
+  const existing = await getAsync(
+    `SELECT conversations.id FROM conversations
+     JOIN conversation_members m1 ON m1.conversationId = conversations.id AND m1.userId = ?
+     JOIN conversation_members m2 ON m2.conversationId = conversations.id AND m2.userId = ?
+     WHERE conversations.type = 'dm' LIMIT 1`,
+    participants
+  );
+  if (existing) return existing.id;
+  const id = `dm-${uuidv4()}`;
+  await runAsync(
+    `INSERT INTO conversations (id, type, name, icon, banner, createdBy, createdAt) VALUES (?, 'dm', NULL, NULL, NULL, ?, ?)`,
+    [id, userA, now()]
+  );
+  await ensureMember(id, userA);
+  await ensureMember(id, userB);
+  return id;
+}
+
+async function createGroup({ creatorId, name, banner, icon, memberIds }) {
+  const id = `group-${uuidv4()}`;
+  await runAsync(
+    `INSERT INTO conversations (id, type, name, icon, banner, createdBy, createdAt) VALUES (?, 'group', ?, ?, ?, ?, ?)`,
+    [id, name || "New Group", icon || "", banner || "", creatorId, now()]
+  );
+  const uniqueMembers = Array.from(new Set([creatorId, ...(memberIds || [])]));
+  for (const memberId of uniqueMembers) {
+    await ensureMember(id, memberId);
+  }
+  return id;
+}
+
+async function getRelationship(ownerId, targetId) {
+  return getAsync(`SELECT * FROM relationships WHERE ownerId = ? AND targetId = ?`, [ownerId, targetId]);
+}
+
+async function setRelationship(ownerId, targetId, status) {
+  await runAsync(
+    `INSERT INTO relationships (ownerId, targetId, status, createdAt)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(ownerId, targetId) DO UPDATE SET status = excluded.status, createdAt = excluded.createdAt`,
+    [ownerId, targetId, status, now()]
+  );
+}
+
+async function listRelationships(ownerId) {
+  const rows = await allAsync(`SELECT targetId, status FROM relationships WHERE ownerId = ?`, [ownerId]);
+  const result = { accepted: [], outgoing: [], incoming: [] };
+  for (const row of rows) {
+    const profile = await getAsync(`SELECT id, name, avatar, color, banner FROM users WHERE id = ?`, [row.targetId]);
+    if (!profile) continue;
+    if (row.status === "accepted") result.accepted.push(profile);
+    if (row.status === "outgoing") result.outgoing.push(profile);
+    if (row.status === "incoming") result.incoming.push(profile);
+  }
+  return result;
+}
+
+async function acceptFriend(ownerId, targetId) {
+  await setRelationship(ownerId, targetId, "accepted");
+  await setRelationship(targetId, ownerId, "accepted");
+}
+
+async function sendFriendRequest(ownerId, targetId) {
+  await setRelationship(ownerId, targetId, "outgoing");
+  await setRelationship(targetId, ownerId, "incoming");
+}
+
+async function removeFriend(ownerId, targetId) {
+  await runAsync(`DELETE FROM relationships WHERE ownerId = ? AND targetId = ?`, [ownerId, targetId]);
+  await runAsync(`DELETE FROM relationships WHERE ownerId = ? AND targetId = ?`, [targetId, ownerId]);
+}
+
+const socketsMeta = new Map();
+const conversationPresence = new Map();
+
+function emitToUser(userId, event, payload) {
+  for (const [socketId, meta] of socketsMeta.entries()) {
+    if (meta.user.id === userId) {
+      io.to(socketId).emit(event, payload);
+    }
+  }
+}
+
+function joinPresence(socket, conversationId, user) {
+  socket.join(conversationId);
+  const meta = socketsMeta.get(socket.id);
+  if (meta) meta.conversations.add(conversationId);
+  let map = conversationPresence.get(conversationId);
+  if (!map) {
+    map = new Map();
+    conversationPresence.set(conversationId, map);
+  }
+  const wasPresent = map.has(user.id);
+  map.set(user.id, user);
+  io.to(conversationId).emit("presence:list", {
+    conversationId,
+    users: Array.from(map.values()),
+  });
+  if (!wasPresent) {
+    socket.to(conversationId).emit("presence:user-joined", { conversationId, user });
+  }
+}
+
+function leavePresence(socket, conversationId, user) {
+  socket.leave(conversationId);
+  const map = conversationPresence.get(conversationId);
+  if (!map) return;
+  map.delete(user.id);
+  io.to(conversationId).emit("presence:list", {
+    conversationId,
+    users: Array.from(map.values()),
+  });
+  socket.to(conversationId).emit("presence:user-left", { conversationId, userId: user.id });
+}
+
+async function bootstrap() {
+  await ensureDefaultRealm();
+}
+
+bootstrap();
 
 io.on("connection", (socket) => {
   socket.on("join", async (payload, ack) => {
     try {
-      const serverKey = payload?.server === "vortex" ? "vortex" : "deblocked";
       const user = {
         id: payload?.id || uuidv4(),
         name: String(payload?.name || "Guest").slice(0, 64),
         color: String(payload?.color || "#7b61ff").slice(0, 32),
         avatar: String(payload?.avatar || "").slice(0, 512),
+        banner: String(payload?.banner || "").slice(0, 512),
       };
 
-      const existing = socketsMeta.get(socket.id);
-      if (existing && existing.server !== serverKey) {
-        socket.leave(existing.server);
-        presence[existing.server].delete(existing.user.id);
-        io.to(existing.server).emit("presence:user-left", {
-          userId: existing.user.id,
-          name: existing.user.name,
-        });
-        io.to(existing.server).emit(
-          "message:new",
-          makeSystem(`${existing.user.name} switched realms`, existing.server)
-        );
-        io.to(existing.server).emit("presence:list", Array.from(presence[existing.server].values()));
-      }
+      socketsMeta.set(socket.id, { user, conversations: new Set() });
+      await upsertUser(user);
+      await ensureMember(DEFAULT_REALM_ID, user.id);
 
-      socketsMeta.set(socket.id, { user, server: serverKey });
-      socket.join(serverKey);
-      presence[serverKey].set(user.id, user);
-      await upsertUser(user, serverKey);
+      const conversations = await listUserConversations(user.id);
+      const friends = await listRelationships(user.id);
 
-      if (serverKey === "vortex") {
-        loadVortexUsers().then((users) => {
-          users.forEach((remote) => {
-            presence.vortex.set(remote.id, Object.assign({ color: "#3ac8ff" }, remote));
-          });
-          io.to("vortex").emit("presence:list", Array.from(presence.vortex.values()));
-        });
-        loadVortexMessages().then(async (messages) => {
-          for (const msg of messages) {
-            try {
-              await upsertUser(msg.user, "vortex");
-              await persistMessage({
-                ...msg,
-                source: msg.source || "vortex:remote",
-                server: "vortex",
-                user: msg.user,
-                createdAt: msg.createdAt || now(),
-                synced: 1,
-              });
-            } catch (err) {
-              if (!/UNIQUE constraint failed/.test(String(err.message))) {
-                console.warn("Persist remote vortex message failed", err.message);
-              }
-            }
-          }
-        });
-      }
-
-      await broadcastHistory(socket, serverKey);
-      io.to(serverKey).emit("presence:list", Array.from(presence[serverKey].values()));
-      socket.to(serverKey).emit("presence:user-joined", { user });
-      io.to(serverKey).emit("message:new", makeSystem(`${user.name} joined`, serverKey));
+      conversations.forEach((convo) => {
+        joinPresence(socket, convo.id, user);
+      });
 
       ack &&
         ack({
           ok: true,
           user,
-          server: serverKey,
-          serverLabel: presenceLabel(serverKey),
-          online: Array.from(presence[serverKey].values()),
+          conversations,
+          defaultConversationId: DEFAULT_REALM_ID,
+          friends,
         });
+
+      for (const convo of conversations) {
+        const history = await listHistory(convo.id, 200);
+        socket.emit("history", { conversationId: convo.id, messages: history });
+      }
+    } catch (err) {
+      console.error("join error", err.message);
+      ack && ack({ ok: false, error: err.message });
+    }
+  });
+
+  socket.on("conversation:open", async ({ conversationId }, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    try {
+      const membership = await getAsync(
+        `SELECT * FROM conversation_members WHERE conversationId = ? AND userId = ?`,
+        [conversationId, meta.user.id]
+      );
+      if (!membership) return ack && ack({ ok: false, error: "missing membership" });
+      joinPresence(socket, conversationId, meta.user);
+      const history = await listHistory(conversationId, 250);
+      socket.emit("history", { conversationId, messages: history });
+      ack && ack({ ok: true });
+    } catch (err) {
+      ack && ack({ ok: false, error: err.message });
+    }
+  });
+
+  socket.on("conversation:start-dm", async ({ targetId }, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    if (!targetId) return ack && ack({ ok: false, error: "missing target" });
+    try {
+      const conversationId = await getOrCreateDM(meta.user.id, targetId);
+      await ensureMember(conversationId, meta.user.id);
+      joinPresence(socket, conversationId, meta.user);
+      const summary = await conversationSummary(conversationId);
+      const history = await listHistory(conversationId, 200);
+      socket.emit("history", { conversationId, messages: history });
+      ack && ack({ ok: true, conversation: summary });
+      io.to(conversationId).emit("conversation:updated", summary);
+      emitToUser(targetId, "conversation:updated", summary);
+      emitToUser(targetId, "history", { conversationId, messages: history });
+    } catch (err) {
+      ack && ack({ ok: false, error: err.message });
+    }
+  });
+
+  socket.on("conversation:create", async (payload, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    try {
+      const id = await createGroup({
+        creatorId: meta.user.id,
+        name: payload?.name,
+        banner: payload?.banner,
+        icon: payload?.icon,
+        memberIds: payload?.members || [],
+      });
+      const summary = await conversationSummary(id);
+      joinPresence(socket, id, meta.user);
+      const history = await listHistory(id, 200);
+      socket.emit("history", { conversationId: id, messages: history });
+      ack && ack({ ok: true, conversation: summary });
+      io.to(id).emit("conversation:updated", summary);
+      const memberIds = (summary.members || []).map((m) => m.id).filter((id) => id !== meta.user.id);
+      for (const memberId of memberIds) {
+        emitToUser(memberId, "conversation:updated", summary);
+        emitToUser(memberId, "history", { conversationId: id, messages: history });
+      }
+    } catch (err) {
+      ack && ack({ ok: false, error: err.message });
+    }
+  });
+
+  socket.on("conversation:invite", async ({ conversationId, targetId }, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    if (!conversationId || !targetId) return ack && ack({ ok: false, error: "invalid" });
+    try {
+      const convo = await getAsync(`SELECT * FROM conversations WHERE id = ?`, [conversationId]);
+      if (!convo) return ack && ack({ ok: false, error: "missing conversation" });
+      await ensureMember(conversationId, targetId);
+      const summary = await conversationSummary(conversationId);
+      ack && ack({ ok: true });
+      io.to(conversationId).emit("conversation:updated", summary);
+      emitToUser(targetId, "conversation:updated", summary);
+      emitToUser(targetId, "history", { conversationId, messages: await listHistory(conversationId, 200) });
     } catch (err) {
       ack && ack({ ok: false, error: err.message });
     }
@@ -508,114 +628,81 @@ io.on("connection", (socket) => {
   socket.on("message:send", async (payload, ack) => {
     const meta = socketsMeta.get(socket.id);
     if (!meta) return ack && ack({ ok: false, error: "not joined" });
-    const last = socket._lastMsgAt || 0;
-    const ts = now();
-    if (ts - last < 250) return ack && ack({ ok: false, error: "Slow down" });
-    socket._lastMsgAt = ts;
-
-    const text = payload?.text ? String(payload.text).slice(0, 4000) : "";
-    const attachment = payload?.attachment?.url
-      ? { url: String(payload.attachment.url).slice(0, 2048) }
-      : null;
-    if (!text && !attachment) return ack && ack({ ok: false, error: "Empty message" });
-
-    const msg = {
-      id: uuidv4(),
-      server: meta.server,
-      source: meta.server === "vortex" ? "vortex:local" : "deblocked",
-      user: meta.user,
-      text,
-      attachment,
-      replyTo: payload?.replyTo || null,
-      createdAt: ts,
-      synced: 1,
-    };
-
+    const conversationId = payload?.conversationId;
+    if (!conversationId) return ack && ack({ ok: false, error: "missing conversation" });
     try {
-      await persistMessage(msg);
-      const enriched = await enrichMessage({
-        ...msg,
-        name: msg.user.name,
-        color: msg.user.color,
-        avatar: msg.user.avatar,
-        userId: msg.user.id,
-        attachment: msg.attachment?.url || null,
-      });
-      io.to(meta.server).emit("message:new", enriched);
+      const membership = await getAsync(
+        `SELECT * FROM conversation_members WHERE conversationId = ? AND userId = ?`,
+        [conversationId, meta.user.id]
+      );
+      if (!membership) return ack && ack({ ok: false, error: "missing membership" });
+      const text = payload?.text ? String(payload.text).slice(0, 4000) : "";
+      const attachment = payload?.attachment?.url
+        ? String(payload.attachment.url).slice(0, 2048)
+        : null;
+      if (!text && !attachment) return ack && ack({ ok: false, error: "Empty message" });
+      const msg = {
+        id: uuidv4(),
+        conversationId,
+        userId: meta.user.id,
+        text,
+        attachment,
+        replyTo: payload?.replyTo || null,
+        createdAt: now(),
+      };
+      await recordMessage(msg);
+      const enriched = await fetchMessage(msg.id);
+      io.to(conversationId).emit("message:new", enriched);
       ack && ack({ ok: true, id: msg.id });
-      if (meta.server === "vortex") {
-        const ok = await pushVortexMessage({
-          id: msg.id,
-          userId: msg.user.id,
-          name: msg.user.name,
-          avatar: msg.user.avatar,
-          text: msg.text,
-          attachment: msg.attachment?.url || null,
-          replyTo: msg.replyTo,
-          createdAt: msg.createdAt,
-        });
-        if (!ok) {
-          await runAsync(`UPDATE messages SET synced = 0 WHERE id = ?`, [msg.id]);
-        }
-      }
     } catch (err) {
-      console.error("message:send error", err.message);
+      console.error("message send error", err.message);
       ack && ack({ ok: false, error: "Failed to save" });
     }
   });
 
-  socket.on("message:react", async (payload, ack) => {
+  socket.on("message:react", async ({ messageId, emoji }, ack) => {
     const meta = socketsMeta.get(socket.id);
     if (!meta) return ack && ack({ ok: false, error: "not joined" });
-    const messageId = payload?.messageId;
-    const emoji = payload?.emoji;
     if (!messageId || !emoji) return ack && ack({ ok: false, error: "invalid" });
     try {
-      const existing = await allAsync(`SELECT * FROM reactions WHERE messageId = ? AND userId = ? AND emoji = ?`, [
-        messageId,
-        meta.user.id,
-        emoji,
-      ]);
+      const existing = await allAsync(
+        `SELECT * FROM reactions WHERE messageId = ? AND userId = ? AND emoji = ?`,
+        [messageId, meta.user.id, emoji]
+      );
       if (existing.length) {
-        await removeReaction({ messageId, userId: meta.user.id, emoji });
-      } else {
-        await saveReaction({
-          id: uuidv4(),
+        await runAsync(`DELETE FROM reactions WHERE messageId = ? AND userId = ? AND emoji = ?`, [
           messageId,
-          userId: meta.user.id,
-          server: meta.server,
+          meta.user.id,
           emoji,
-        });
+        ]);
+      } else {
+        await runAsync(
+          `INSERT INTO reactions (id, messageId, userId, emoji, createdAt) VALUES (?, ?, ?, ?, ?)`,
+          [uuidv4(), messageId, meta.user.id, emoji, now()]
+        );
       }
-      const reactions = await buildReactionMap(messageId, meta.server);
-      io.to(meta.server).emit("message:reactions", { messageId, reactions });
+      const msg = await fetchMessage(messageId);
+      if (msg) {
+        io.to(msg.conversationId).emit("message:update", msg);
+      }
       ack && ack({ ok: true });
-    } catch (err) {
-      console.error("reaction error", err.message);
-      ack && ack({ ok: false, error: "reaction failed" });
-    }
-  });
-
-  socket.on("history:request", async (payload, ack) => {
-    const meta = socketsMeta.get(socket.id);
-    if (!meta) return ack && ack({ ok: false, error: "not joined" });
-    try {
-      const history = await listHistory(meta.server, Math.min(500, payload?.limit || 250));
-      socket.emit("history", history);
-      ack && ack({ ok: true, count: history.length });
     } catch (err) {
       ack && ack({ ok: false, error: err.message });
     }
   });
 
-  socket.on("message:pull", async ({ id }, ack) => {
-    if (!id) return ack && ack({ ok: false });
+  socket.on("history:request", async ({ conversationId, limit }, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
     try {
-      const rows = await allAsync(`SELECT * FROM messages WHERE id = ? LIMIT 1`, [id]);
-      if (!rows[0]) return ack && ack({ ok: false, error: "missing" });
-      const msg = await enrichMessage(rows[0]);
-      socket.emit("message:update", msg);
-      ack && ack({ ok: true });
+      const membership = await getAsync(
+        `SELECT * FROM conversation_members WHERE conversationId = ? AND userId = ?`,
+        [conversationId, meta.user.id]
+      );
+      if (!membership) return ack && ack({ ok: false, error: "missing membership" });
+      const history = await listHistory(conversationId, Math.min(500, limit || 250));
+      socket.emit("history", { conversationId, messages: history });
+      ack && ack({ ok: true, count: history.length });
     } catch (err) {
       ack && ack({ ok: false, error: err.message });
     }
@@ -629,17 +716,84 @@ io.on("connection", (socket) => {
     }
     if (typeof partial?.color === "string") meta.user.color = partial.color.slice(0, 32);
     if (typeof partial?.avatar === "string") meta.user.avatar = partial.avatar.slice(0, 512);
+    if (typeof partial?.banner === "string") meta.user.banner = partial.banner.slice(0, 512);
     socketsMeta.set(socket.id, meta);
-    presence[meta.server].set(meta.user.id, meta.user);
-    await upsertUser(meta.user, meta.server);
-    io.to(meta.server).emit("presence:user-updated", { user: meta.user });
+    await upsertUser(meta.user);
+    meta.conversations.forEach((conversationId) => {
+      const map = conversationPresence.get(conversationId);
+      if (map) {
+        map.set(meta.user.id, meta.user);
+        io.to(conversationId).emit("presence:list", {
+          conversationId,
+          users: Array.from(map.values()),
+        });
+      }
+    });
     ack && ack({ ok: true, user: meta.user });
   });
 
-  socket.on("presence:typing", (isTyping) => {
+  socket.on("friend:add", async ({ targetId }, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    if (!targetId) return ack && ack({ ok: false, error: "missing target" });
+    if (targetId === meta.user.id) return ack && ack({ ok: false, error: "cannot friend yourself" });
+    try {
+      const existing = await getRelationship(meta.user.id, targetId);
+      if (existing && existing.status === "accepted") {
+        return ack && ack({ ok: true });
+      }
+      await sendFriendRequest(meta.user.id, targetId);
+      const friends = await listRelationships(meta.user.id);
+      ack && ack({ ok: true, friends });
+      const sockets = Array.from(socketsMeta.entries()).filter(([, value]) => value.user.id === targetId);
+      for (const [socketId] of sockets) {
+        io.to(socketId).emit("friends:update", await listRelationships(targetId));
+      }
+    } catch (err) {
+      ack && ack({ ok: false, error: err.message });
+    }
+  });
+
+  socket.on("friend:accept", async ({ targetId }, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    if (!targetId) return ack && ack({ ok: false, error: "missing target" });
+    try {
+      await acceptFriend(meta.user.id, targetId);
+      const friends = await listRelationships(meta.user.id);
+      ack && ack({ ok: true, friends });
+      const sockets = Array.from(socketsMeta.entries()).filter(([, value]) => value.user.id === targetId);
+      for (const [socketId] of sockets) {
+        io.to(socketId).emit("friends:update", await listRelationships(targetId));
+      }
+    } catch (err) {
+      ack && ack({ ok: false, error: err.message });
+    }
+  });
+
+  socket.on("friend:remove", async ({ targetId }, ack) => {
+    const meta = socketsMeta.get(socket.id);
+    if (!meta) return ack && ack({ ok: false, error: "not joined" });
+    if (!targetId) return ack && ack({ ok: false, error: "missing target" });
+    try {
+      await removeFriend(meta.user.id, targetId);
+      const friends = await listRelationships(meta.user.id);
+      ack && ack({ ok: true, friends });
+      const sockets = Array.from(socketsMeta.entries()).filter(([, value]) => value.user.id === targetId);
+      for (const [socketId] of sockets) {
+        io.to(socketId).emit("friends:update", await listRelationships(targetId));
+      }
+    } catch (err) {
+      ack && ack({ ok: false, error: err.message });
+    }
+  });
+
+  socket.on("presence:typing", ({ conversationId, isTyping }) => {
     const meta = socketsMeta.get(socket.id);
     if (!meta) return;
-    socket.to(meta.server).emit("presence:typing", {
+    if (!conversationId) return;
+    socket.to(conversationId).emit("presence:typing", {
+      conversationId,
       userId: meta.user.id,
       name: meta.user.name,
       isTyping: !!isTyping,
@@ -650,10 +804,9 @@ io.on("connection", (socket) => {
     const meta = socketsMeta.get(socket.id);
     if (!meta) return;
     socketsMeta.delete(socket.id);
-    presence[meta.server].delete(meta.user.id);
-    socket.to(meta.server).emit("presence:user-left", { userId: meta.user.id, name: meta.user.name });
-    io.to(meta.server).emit("message:new", makeSystem(`${meta.user.name} left`, meta.server));
-    io.to(meta.server).emit("presence:list", Array.from(presence[meta.server].values()));
+    meta.conversations.forEach((conversationId) => {
+      leavePresence(socket, conversationId, meta.user);
+    });
   });
 });
 
