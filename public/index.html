@@ -3,133 +3,113 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>Deblocked Chat V3 Ultra — Vortex Integration</title>
+    <title>Deblocked Nexus</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="./style.css?v=4" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./style.css?v=5" />
   </head>
-  <body class="no-scroll">
-    <canvas id="stars" aria-hidden="true"></canvas>
-
+  <body>
     <div id="intro" class="intro" role="dialog" aria-modal="true" aria-labelledby="introTitle">
       <div class="intro-card">
         <header class="intro-head">
-          <div class="intro-glow" aria-hidden="true"></div>
-          <h1 id="introTitle">Deblocked Chat V3 Ultra</h1>
-          <p class="intro-sub">Now with Vortex cross-network presence, zero friction, and AAA visuals.</p>
+          <h1 id="introTitle">Welcome to the Deblocked Nexus</h1>
+          <p class="intro-sub">Claim your identity, pick an aura, and drop into the new cross-realm lounge.</p>
         </header>
-
         <div class="intro-grid">
           <label class="field">
-            <span class="label">Display name</span>
-            <input id="introName" class="input" maxlength="32" placeholder="Choose a codename" />
+            <span class="label">Codename</span>
+            <input id="introName" class="input" maxlength="32" placeholder="Select a display name" />
           </label>
-
           <label class="field">
-            <span class="label">Server realm</span>
-            <div class="select-wrap">
-              <select id="serverMode" class="input select">
-                <option value="deblocked">Deblocked Chat • Railway</option>
-                <option value="vortex">Vortex Chat • WaveUnblocked</option>
-              </select>
-              <span class="select-indicator" aria-hidden="true">▾</span>
+            <span class="label">Accent</span>
+            <div class="accent-picker">
+              <input id="accentStart" type="color" value="#7b61ff" />
+              <input id="accentEnd" type="color" value="#ad83ff" />
             </div>
           </label>
-
           <div class="field file-field">
-            <span class="label">Avatar (PNG • JPEG • WEBP)</span>
+            <span class="label">Avatar</span>
             <label class="file-pill">
               <input id="introAvatar" type="file" accept="image/png,image/jpeg,image/webp" />
               <span class="file-pill-icon">📁</span>
-              <span class="file-pill-label">Upload avatar</span>
+              <span class="file-pill-label">Upload portrait</span>
             </label>
-            <p class="muted">Avatar + theme sync instantly across devices and both networks.</p>
+            <p class="muted">Optional. Images stay private to your device unless you send them.</p>
+          </div>
+          <div class="field file-field">
+            <span class="label">Profile banner</span>
+            <label class="file-pill">
+              <input id="introBanner" type="color" value="#1d1b22" />
+              <span class="file-pill-icon">🌈</span>
+              <span class="file-pill-label">Pick a banner hue</span>
+            </label>
           </div>
         </div>
-
         <div class="intro-actions">
-          <button id="introStart" class="btn primary">Start chatting</button>
+          <button id="introStart" class="btn primary">Enter Nexus</button>
         </div>
-
-        <footer class="intro-footer">
-          <p class="tip">Switch between networks anytime in Settings → Connectivity.</p>
-        </footer>
       </div>
     </div>
 
-    <div id="app" class="app" aria-hidden="true">
-      <aside class="side-panel">
-        <div class="side-header">
-          <div class="brand">
-            <div class="brand-icon" aria-hidden="true"></div>
-            <div class="brand-meta">
-              <div class="brand-title">Deblocked Chat</div>
-              <div id="activeServer" class="brand-sub">Deblocked Realm</div>
-            </div>
-          </div>
-          <div class="presence-meta">
-            <div class="presence-count" id="onlineCount">0 online</div>
-            <div class="presence-avatars" id="onlineList"></div>
-          </div>
-        </div>
+    <div id="app" class="app hidden" aria-hidden="true">
+      <nav class="guild-bar">
+        <button id="homeButton" class="guild active" title="Home">
+          <span class="guild-label">DN</span>
+        </button>
+        <div id="realmGuilds" class="guild-stack"></div>
+        <button id="createGroupBtn" class="guild ghost" title="Create group chat">＋</button>
+      </nav>
 
-        <section class="side-settings">
-          <button id="settingsBtn" class="btn ghost wide">⚙️ Settings</button>
-          <button id="connectivityBtn" class="btn ghost wide">🌐 Connectivity</button>
-          <button id="toggleStarsBtn" class="btn ghost wide">✨ Toggle Starfield</button>
+      <aside class="nav-panel">
+        <header class="nav-header">
+          <div class="nav-title">Deblocked Nexus</div>
+          <div id="navStatus" class="nav-status">Connecting…</div>
+        </header>
+        <section class="nav-section">
+          <div class="section-head">Direct Messages <button id="startDmBtn" class="mini-btn">New DM</button></div>
+          <div id="dmList" class="channel-list empty-state">No DMs yet</div>
         </section>
-
-        <section class="side-history" id="reactionPalette" aria-label="Quick reactions">
-          <button data-emoji="❤️" class="emoji-btn">❤️</button>
-          <button data-emoji="😂" class="emoji-btn">😂</button>
-          <button data-emoji="👍" class="emoji-btn">👍</button>
-          <button data-emoji="😮" class="emoji-btn">😮</button>
-          <button data-emoji="👎" class="emoji-btn">👎</button>
+        <section class="nav-section">
+          <div class="section-head">Realms</div>
+          <div id="realmList" class="channel-list"></div>
+        </section>
+        <section class="nav-section">
+          <div class="section-head">Groups</div>
+          <div id="groupList" class="channel-list empty-state">Spin up a group to collaborate</div>
         </section>
       </aside>
 
-      <div class="chat-shell">
-        <header id="banner" class="banner">
-          <div class="banner-left">
-            <h2 class="room-title">Skyline Lounge</h2>
-            <span class="room-sub">Real-time synced with lightning-grade servers.</span>
+      <main class="workspace">
+        <header class="workspace-header">
+          <div class="workspace-meta">
+            <div id="conversationTitle" class="workspace-title">Select a space</div>
+            <div id="conversationSubtitle" class="workspace-subtitle"></div>
           </div>
-          <div class="banner-actions">
-            <label class="toggle">
-              <input id="toggleTimestamps" type="checkbox" />
-              <span>Show timestamps</span>
-            </label>
-            <label class="toggle">
-              <input id="toggleAutoScroll" type="checkbox" checked />
-              <span>Auto-scroll</span>
-            </label>
+          <div class="workspace-actions">
+            <button id="inviteBtn" class="btn ghost small" disabled>Invite</button>
+            <button id="addFriendBtn" class="btn ghost small">Add Friend</button>
+            <button id="profileBtn" class="btn ghost small">My Profile</button>
           </div>
         </header>
-
-        <main id="feed" class="feed" aria-live="polite"></main>
+        <section id="feed" class="feed" aria-live="polite"></section>
         <div id="typing" class="typing hidden"></div>
-
         <footer class="composer">
           <div class="composer-top">
-            <div class="profile">
-              <label class="pfp" title="Upload avatar">
-                <input id="avatarInput" type="file" accept="image/png,image/jpeg,image/webp" hidden />
-                <img id="avatarPreview" alt="Your avatar" />
-              </label>
-              <div class="profile-meta">
-                <div id="profileName" class="profile-name"></div>
-                <div class="profile-tagline">Drag & drop files, mention friends with @</div>
-              </div>
+            <img id="avatarPreview" class="composer-avatar" alt="Your avatar" />
+            <div class="composer-meta">
+              <div id="profileName" class="composer-name"></div>
+              <div id="composerHint" class="composer-hint">Shift + Enter for newline</div>
             </div>
-            <div class="composer-actions">
-              <button id="bannerTheme" class="btn icon" title="Randomize gradient">🎨</button>
-              <button id="historyRefresh" class="btn icon" title="Refresh history">🔄</button>
-              <button id="clearChat" class="btn ghost" type="button">Clear local log</button>
+            <div class="composer-switches">
+              <label class="toggle"><input id="toggleTimestamps" type="checkbox" /><span>Timestamps</span></label>
+              <label class="toggle"><input id="toggleAutoScroll" type="checkbox" checked /><span>Auto scroll</span></label>
             </div>
           </div>
-
-          <div class="composer-main">
+          <div class="composer-body">
             <div class="reply-preview hidden" id="replyPreview">
               <div class="reply-meta">
                 <span id="replyUser"></span>
@@ -137,90 +117,122 @@
               </div>
               <button id="cancelReply" class="btn icon" title="Cancel reply">✕</button>
             </div>
-            <textarea id="messageInput" class="input msg-input" placeholder="Shift + Enter for newline" autocomplete="off"></textarea>
+            <textarea
+              id="messageInput"
+              class="input msg-input"
+              placeholder="Message the Nexus"
+              autocomplete="off"
+            ></textarea>
             <div class="composer-bar">
               <button id="attachBtn" class="btn ghost" title="Attach image">📎</button>
               <input id="fileInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden />
-              <button id="sendBtn" class="btn primary strong" title="Send">Send</button>
+              <button id="sendBtn" class="btn primary strong" title="Send" disabled>Send</button>
             </div>
           </div>
         </footer>
-      </div>
+      </main>
+
+      <aside class="info-panel">
+        <section class="profile-card">
+          <div id="banner" class="profile-banner"></div>
+          <div class="profile-body">
+            <img id="sidebarAvatar" class="profile-avatar" alt="Avatar" />
+            <div class="profile-details">
+              <div id="sidebarName" class="profile-name"></div>
+              <div id="activeBadge" class="profile-badge">Online</div>
+            </div>
+          </div>
+        </section>
+        <section class="info-section">
+          <div class="section-head">Currently online</div>
+          <div id="presenceList" class="presence-list empty-state">No one connected</div>
+        </section>
+        <section class="info-section">
+          <div class="section-head">Friends</div>
+          <div id="friendsList" class="friends-list empty-state">No friends added</div>
+        </section>
+        <section class="info-section">
+          <div class="section-head">Pending requests</div>
+          <div id="pendingList" class="friends-list empty-state">No pending invites</div>
+        </section>
+      </aside>
     </div>
 
-    <dialog id="settings" class="settings">
-      <form method="dialog" class="settings-card">
-        <header class="settings-header">
-          <h2>Personalize the Experience</h2>
-          <button id="closeSettings" class="btn icon ghost" value="close" title="Close">✕</button>
+    <dialog id="profileSheet" class="sheet">
+      <article class="sheet-card">
+        <header class="sheet-banner" id="sheetBanner">
+          <button class="sheet-close" id="closeProfile">✕</button>
         </header>
-
-        <section class="settings-grid">
-          <label class="field">
-            <span class="label">Display name</span>
-            <input id="nameField" class="input" maxlength="32" placeholder="Your display name" />
-          </label>
-
-          <label class="field">
-            <span class="label">Name gradient (left)</span>
-            <input id="colorA" type="color" value="#7b61ff" />
-          </label>
-
-          <label class="field">
-            <span class="label">Name gradient (right)</span>
-            <input id="colorB" type="color" value="#ad83ff" />
-          </label>
-
-          <label class="field">
-            <span class="label">Banner color</span>
-            <input id="bannerColor" type="color" value="#1d1b22" />
-          </label>
-
-          <div class="field">
-            <span class="label">Accent preview</span>
-            <div id="accentPreview" class="accent-preview"></div>
+        <div class="sheet-body">
+          <img id="sheetAvatar" class="sheet-avatar" alt="Avatar" />
+          <h2 id="sheetName"></h2>
+          <p id="sheetTag"></p>
+          <div class="sheet-actions">
+            <button id="sheetFriendBtn" class="btn primary"></button>
+            <button id="sheetMessageBtn" class="btn ghost"></button>
           </div>
-        </section>
-
-        <footer class="settings-footer">
-          <button id="saveSettings" class="btn primary">Save changes</button>
-        </footer>
-      </form>
+        </div>
+      </article>
     </dialog>
 
-    <dialog id="connectivity" class="settings">
-      <form method="dialog" class="settings-card">
-        <header class="settings-header">
-          <h2>Connectivity</h2>
-          <button id="closeConnectivity" class="btn icon ghost" value="close" title="Close">✕</button>
+    <dialog id="groupSheet" class="sheet">
+      <article class="sheet-card">
+        <header class="sheet-head">
+          <h2>Create group</h2>
+          <button class="sheet-close" id="closeGroup">✕</button>
         </header>
-        <section class="settings-grid">
+        <form id="groupForm" class="sheet-body">
           <label class="field">
-            <span class="label">Active network</span>
-            <div class="select-wrap">
-              <select id="connectivityServer" class="input select">
-                <option value="deblocked">Deblocked Chat • Railway</option>
-                <option value="vortex">Vortex Chat • WaveUnblocked</option>
-              </select>
-              <span class="select-indicator" aria-hidden="true">▾</span>
-            </div>
-            <p class="muted">Switch instantly; history sync and presence update in real time.</p>
+            <span class="label">Group name</span>
+            <input id="groupName" class="input" maxlength="60" placeholder="Design Squad" />
           </label>
           <label class="field">
-            <span class="label">Starfield background</span>
-            <label class="toggle inline">
-              <input id="toggleStars" type="checkbox" checked />
-              <span>Enable cosmic ambience</span>
-            </label>
+            <span class="label">Banner accent</span>
+            <input id="groupBanner" type="color" value="#2f2b3a" />
           </label>
-        </section>
-        <footer class="settings-footer">
-          <button id="applyConnectivity" class="btn primary">Apply</button>
-        </footer>
-      </form>
+          <div class="field">
+            <span class="label">Invite friends</span>
+            <div id="groupFriends" class="pill-grid"></div>
+          </div>
+          <footer class="sheet-footer">
+            <button type="submit" class="btn primary">Create group</button>
+          </footer>
+        </form>
+      </article>
     </dialog>
 
-    <script src="/socket.io/socket.io.js"></script>
-    <script type="module" src="./app.js?v=4"></script>
+    <dialog id="friendSheet" class="sheet">
+      <article class="sheet-card">
+        <header class="sheet-head">
+          <h2>Add friend</h2>
+          <button class="sheet-close" id="closeFriend">✕</button>
+        </header>
+        <form id="friendForm" class="sheet-body">
+          <p class="muted">
+            Share your Nexus ID to connect. Paste a friend's ID below to send a request instantly.
+          </p>
+          <label class="field">
+            <span class="label">Friend Nexus ID</span>
+            <input id="friendId" class="input" placeholder="user-xxxx" autocomplete="off" />
+          </label>
+          <footer class="sheet-footer">
+            <button type="submit" class="btn primary">Send request</button>
+          </footer>
+        </form>
+      </article>
+    </dialog>
+
+    <dialog id="inviteSheet" class="sheet">
+      <article class="sheet-card">
+        <header class="sheet-head">
+          <h2>Invite to conversation</h2>
+          <button class="sheet-close" id="closeInvite">✕</button>
+        </header>
+        <div class="sheet-body">
+          <p class="muted">Select a friend to bring them into this space.</p>
+          <div id="inviteFriends" class="friends-list empty-state">No friends available</div>
+        </div>
+      </article>
+    </dialog>
   </body>
 </html>
