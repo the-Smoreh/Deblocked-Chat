@@ -18,9 +18,9 @@ const MAX_UPLOAD_MB = 10;
 const ALLOWED_MIME = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 
 const DEFAULT_REALM_ID = "realm-deblocked";
-const DEFAULT_REALM_NAME = "Deblocked Realm";
+const DEFAULT_REALM_NAME = "Deblocked Chat+";
 const DEFAULT_REALM_ICON = "/assets/deblocked-icon.svg";
-const DEFAULT_REALM_BANNER = "linear-gradient(135deg, #7b61ff, #ad83ff)";
+const DEFAULT_REALM_BANNER = "linear-gradient(135deg, #5c7cfa, #82a0ff)";
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
