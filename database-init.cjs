@@ -1,75 +1,113 @@
-// database-init.cjs
-import sqlite3 from "sqlite3";
-import { open } from "sqlite";
-import path from "path";
-import fs from "fs";
+const path = require("path");
+const fs = require("fs");
+const sqlite3 = require("sqlite3").verbose();
 
-const DB_PATH = path.resolve("./chat.db");
+const DATA_DIR = process.env.DATA_DIR || path.resolve("./data");
+const DB_FILE = path.join(DATA_DIR, "messages.db");
 
-async function initDatabase() {
-  // Ensure database file exists
-  if (!fs.existsSync(DB_PATH)) {
-    console.log("🆕 Creating new SQLite database...");
-  }
+const DEFAULT_REALM_ID = "realm-deblocked";
+const DEFAULT_REALM_NAME = "Deblocked Chat+";
+const DEFAULT_REALM_ICON = "/assets/deblocked-icon.svg";
+const DEFAULT_REALM_BANNER = "linear-gradient(135deg, #5c7cfa, #82a0ff)";
 
-  // Open database connection
-  const db = await open({
-    filename: DB_PATH,
-    driver: sqlite3.Database
-  });
+fs.mkdirSync(DATA_DIR, { recursive: true });
 
-  console.log("📀 Connected to SQLite database at", DB_PATH);
+const db = new sqlite3.Database(DB_FILE);
 
-  // --- USERS TABLE ---
-  await db.exec(`
+db.serialize(() => {
+  console.log(`📀 Initializing chat database at ${DB_FILE}`);
+  db.run(`PRAGMA journal_mode = WAL;`);
+  db.run(`PRAGMA synchronous = NORMAL;`);
+  db.run(`PRAGMA foreign_keys = ON;`);
+  db.run(`PRAGMA busy_timeout = 3000;`);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE,
-      avatarUrl TEXT,
-      joinedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+      id TEXT PRIMARY KEY,
+      name TEXT,
+      color TEXT,
+      avatar TEXT,
+      banner TEXT,
+      lastSeen INTEGER
     );
   `);
 
-  // --- MESSAGES TABLE ---
-  await db.exec(`
+  db.run(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      name TEXT,
+      icon TEXT,
+      banner TEXT,
+      createdBy TEXT,
+      createdAt INTEGER
+    );
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS conversation_members (
+      conversationId TEXT,
+      userId TEXT,
+      role TEXT,
+      nickname TEXT,
+      joinedAt INTEGER,
+      lastRead INTEGER DEFAULT 0,
+      PRIMARY KEY(conversationId, userId),
+      FOREIGN KEY(conversationId) REFERENCES conversations(id) ON DELETE CASCADE,
+      FOREIGN KEY(userId) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
+
+  db.run(`
     CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      userId INTEGER,
-      username TEXT,
-      content TEXT,
-      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(userId) REFERENCES users(id)
+      id TEXT PRIMARY KEY,
+      conversationId TEXT,
+      userId TEXT,
+      text TEXT,
+      attachment TEXT,
+      replyTo TEXT,
+      createdAt INTEGER,
+      FOREIGN KEY(conversationId) REFERENCES conversations(id) ON DELETE CASCADE
     );
   `);
 
-  // --- ONLINE STATUS CACHE (optional, not persisted) ---
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT,
-      active BOOLEAN DEFAULT 1,
-      lastSeen DATETIME DEFAULT CURRENT_TIMESTAMP
+  db.run(`
+    CREATE TABLE IF NOT EXISTS reactions (
+      id TEXT PRIMARY KEY,
+      messageId TEXT,
+      userId TEXT,
+      emoji TEXT,
+      createdAt INTEGER,
+      UNIQUE(messageId, userId, emoji)
     );
   `);
 
-  // --- PROFILE PICTURES TABLE ---
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS avatars (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      username TEXT UNIQUE,
-      url TEXT,
-      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+  db.run(`
+    CREATE TABLE IF NOT EXISTS relationships (
+      ownerId TEXT,
+      targetId TEXT,
+      status TEXT,
+      createdAt INTEGER,
+      PRIMARY KEY(ownerId, targetId)
     );
   `);
 
-  // Indexing for faster lookups
-  await db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_messages_username ON messages(username);
-    CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversationId, createdAt);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(messageId);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_relationships_owner ON relationships(ownerId);`);
 
-  console.log("✅ Database initialized and ready!");
-  return db;
-}
+  db.run(
+    `INSERT OR IGNORE INTO conversations (id, type, name, icon, banner, createdAt) VALUES (?, 'realm', ?, ?, ?, strftime('%s','now'))`,
+    [DEFAULT_REALM_ID, DEFAULT_REALM_NAME, DEFAULT_REALM_ICON, DEFAULT_REALM_BANNER]
+  );
 
-export default initDatabase;
+  console.log("✅ Tables ensured and default realm prepared.");
+});
+
+db.close((err) => {
+  if (err) {
+    console.error("Failed to close database", err);
+  } else {
+    console.log("🏁 Database initialization complete.");
+  }
+});
