@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deblocked Chat</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <section class="chat-card" aria-label="Deblocked Chat">
+      <header class="chat-header">
+        <div>
+          <h1>Deblocked Chat</h1>
+          <p class="status" id="online-status">Online: 0</p>
+        </div>
+      </header>
+      <div class="messages-wrapper">
+        <div id="messages" class="messages" aria-live="polite" aria-label="Chat messages"></div>
+        <button id="jump-to-bottom" class="jump-pill" type="button">New messages</button>
+      </div>
+      <label class="input-label" for="username">Enter your username</label>
+      <input id="username" class="text-input" type="text" placeholder="Enter your username" autocomplete="off" maxlength="80" />
+      <label class="input-label" for="message">Type your message</label>
+      <input id="message" class="text-input" type="text" placeholder="Type your message" autocomplete="off" maxlength="500" />
+      <div class="actions">
+        <input type="file" id="upload-input" accept="image/*,.gif" hidden />
+        <button id="upload-btn" type="button" class="btn secondary">Upload</button>
+        <button id="send-btn" type="button" class="btn primary">Send</button>
+      </div>
+    </section>
+  </main>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/client.js" type="module"></script>
+</body>
+</html>
