@@ -7,7 +7,6 @@ const sendBtn = document.getElementById('send-btn');
 const uploadBtn = document.getElementById('upload-btn');
 const uploadInput = document.getElementById('upload-input');
 const onlineStatus = document.getElementById('online-status');
-const onlineSide = document.getElementById('online-side');
 const jumpButton = document.getElementById('jump-to-bottom');
 
 let lockedUsername = '';
@@ -60,9 +59,6 @@ function createMessageElement(msg) {
   const wrapper = document.createElement('div');
   wrapper.className = 'message';
 
-  const body = document.createElement('div');
-  body.className = 'message-body';
-
   const header = document.createElement('div');
   header.className = 'message-header';
 
@@ -75,13 +71,13 @@ function createMessageElement(msg) {
   timeSpan.textContent = formatTime(msg.timestamp);
 
   header.append(nameSpan, timeSpan);
-  body.append(header);
+  wrapper.append(header);
 
   if (msg.type === 'text') {
-    const textNode = document.createElement('div');
-    textNode.className = 'text';
-    renderLinkedText(textNode, msg.text);
-    body.append(textNode);
+    const body = document.createElement('div');
+    body.className = 'text';
+    renderLinkedText(body, msg.text);
+    wrapper.append(body);
   } else if (msg.type === 'image') {
     const link = document.createElement('a');
     link.href = msg.url;
@@ -93,10 +89,9 @@ function createMessageElement(msg) {
     img.alt = `${msg.username}'s attachment`;
 
     link.append(img);
-    body.append(link);
+    wrapper.append(link);
   }
 
-  wrapper.append(body);
   return wrapper;
 }
 
@@ -216,9 +211,5 @@ socket.on('chat:history', msgs => {
 socket.on('chat:new', handleIncomingMessage);
 
 socket.on('online:update', count => {
-  const text = `Online: ${count}`;
-  onlineStatus.textContent = text;
-  if (onlineSide) {
-    onlineSide.textContent = text;
-  }
+  onlineStatus.textContent = `Online: ${count}`;
 });
