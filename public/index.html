@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deblocked Chat</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <aside class="server-dock" aria-label="Favorite spaces">
+      <button class="server-logo active" aria-label="Deblocked Chat home">DC</button>
+      <button class="server-logo" aria-label="Design Lab">DL</button>
+      <button class="server-logo" aria-label="Study">ST</button>
+      <button class="server-logo" aria-label="Gaming">GG</button>
+      <button class="server-logo" aria-label="Music">♪</button>
+    </aside>
+    <div class="workspace">
+      <aside class="channel-panel" aria-label="Channels">
+        <div class="workspace-heading">
+          <div>
+            <p class="eyebrow">Workspace</p>
+            <h2>Deblocked</h2>
+          </div>
+          <span class="status-dot" aria-hidden="true"></span>
+        </div>
+        <nav class="channel-list">
+          <p class="list-label">Channels</p>
+          <button class="channel active"># general</button>
+          <button class="channel"># design-lounge</button>
+          <button class="channel"># creative-lab</button>
+          <button class="channel"># feedback</button>
+        </nav>
+        <div class="now-card">
+          <p class="subtle">Currently tuned in</p>
+          <p class="huge" id="online-side">Online: 0</p>
+          <p class="subtle">Stay kind, stay curious.</p>
+        </div>
+      </aside>
+      <section class="chat-pane" aria-label="Deblocked Chat">
+        <header class="chat-top">
+          <div>
+            <p class="eyebrow">Channel</p>
+            <h1>Deblocked Chat</h1>
+          </div>
+          <div class="online-chip" id="online-status">Online: 0</div>
+        </header>
+        <div class="messages-panel">
+          <div class="messages-wrapper">
+            <div id="messages" class="messages" aria-live="polite" aria-label="Chat messages"></div>
+            <button id="jump-to-bottom" class="jump-pill" type="button">New messages</button>
+          </div>
+        </div>
+        <section class="composer" aria-label="Message composer">
+          <div class="field-group">
+            <label class="input-label" for="username">Display name</label>
+            <input id="username" class="text-input" type="text" placeholder="Choose a name" autocomplete="off" maxlength="80" />
+          </div>
+          <div class="field-group">
+            <label class="input-label" for="message">Message</label>
+            <div class="message-row">
+              <input id="message" class="text-input" type="text" placeholder="Send a kind note" autocomplete="off" maxlength="500" />
+              <div class="composer-actions">
+                <input type="file" id="upload-input" accept="image/*,.gif" hidden />
+                <button id="upload-btn" type="button" class="btn ghost" aria-label="Upload an image">Upload</button>
+                <button id="send-btn" type="button" class="btn primary">Send</button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </div>
+  </main>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/client.js" type="module"></script>
+</body>
+</html>
